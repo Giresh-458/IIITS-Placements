@@ -50,11 +50,19 @@ def validate_serialized_output(events_path, leads_path):
     
     if len(events_by_id) != len(events) or len(leads_by_id) != len(leads):
         return False, "Duplicate canonical IDs found"
+
+    # FILTERED_OUT is an intentional exclusion from the outreach-lead artifact.
+    # Validate exact coverage against only events that should be emitted.
+    expected_events_by_id = {
+        cid: event
+        for cid, event in events_by_id.items()
+        if event.get("business_classification", {}).get("target_fit") != "FILTERED_OUT"
+    }
         
-    if set(events_by_id.keys()) != set(leads_by_id.keys()):
-        return False, "Canonical ID mismatch between input and output"
+    if set(expected_events_by_id.keys()) != set(leads_by_id.keys()):
+        return False, "Canonical ID mismatch between expected output and serialized leads"
         
-    for cid, event in events_by_id.items():
+    for cid, event in expected_events_by_id.items():
         lead = leads_by_id[cid]
         bc = event.get("business_classification", {})
         
@@ -338,14 +346,14 @@ def run_batch_8(
         json.dump(outreach_leads, f, indent=2)
     with open(out_contacts_path, "w", encoding="utf-8") as f:
         json.dump(outreach_contacts, f, indent=2)
-    with open(out_telemetry_path, "w", encoding="utf-8") as f:
-        json.dump(telemetry, f, indent=2)
-
-    # Perform final serialized output validation
+    # Perform final serialized output validation before writing telemetry so the
+    # telemetry artifact includes any validation failure and final stop reason.
     serialized_valid, serialized_error = validate_serialized_output(events_path, out_leads_path)
     if not serialized_valid:
         logging.error(f"Serialized output validation failed: {serialized_error}")
         telemetry["exceptions"] += 1
+        if telemetry["stop_reason"] == "COMPLETED":
+            telemetry["stop_reason"] = "SERIALIZED_OUTPUT_VALIDATION_FAILED"
         coverage_error = coverage_error or serialized_error
 
     recon_report = f"""# Batch 8 Reconciliation
@@ -397,6 +405,10 @@ Total Readiness = {sum(telemetry['events_by_readiness'].values())}
                          telemetry['invalid_batch_7_outcome_events'])
 
     
+    # Persist final telemetry only after serialization validation has updated it.
+    with open(out_telemetry_path, "w", encoding="utf-8") as f:
+        json.dump(telemetry, f, indent=2)
+
     val_report = f"""# Batch 8 Final Validation
 
 Execution Date: {datetime.utcnow().isoformat()}Z
