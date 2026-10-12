@@ -1,13 +1,23 @@
 import subprocess
+import sys
 
-def run_cmd(cmd):
-    print(f"\n======================================")
-    print(f"RUNNING: {cmd}")
-    print(f"======================================\n")
-    subprocess.run(cmd, shell=True)
+
+def run_tests() -> int:
+    """Run the repository's default pytest suite and propagate its exit code.
+
+    pytest.ini controls collection and excludes tests marked live_integration
+    from the default suite. This helper deliberately does not run persistence
+    scripts, which may write to a configured database.
+    """
+    command = [sys.executable, "-m", "pytest"]
+    print(f"RUNNING: {' '.join(command)}", flush=True)
+    result = subprocess.run(command, check=False)
+    if result.returncode == 0:
+        print("PYTEST_RESULT = PASS")
+    else:
+        print(f"PYTEST_RESULT = FAIL (exit_code={result.returncode})")
+    return result.returncode
+
 
 if __name__ == "__main__":
-    run_cmd("python -m pytest tests/unit/test_batch_9.py tests/unit/test_api.py")
-    run_cmd("python run_batch_9.py")
-    run_cmd("python -m pytest")
-    run_cmd("python -m pytest tests/unit -v")
+    raise SystemExit(run_tests())
