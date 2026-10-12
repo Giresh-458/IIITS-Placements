@@ -40,6 +40,7 @@ class PipelineRunState(TypedDict):
     
     # Discovery & Crawl
     sources: List[Dict[str, Any]]
+    sources_override_provided: bool
     failed_sources: List[Dict[str, Any]]
     crawl_telemetry: Dict[str, Any]
     
@@ -85,7 +86,8 @@ def create_initial_state(run_id: str = None, sources: List[Dict[str, Any]] = Non
         "started_at": datetime.utcnow().isoformat(),
         "completed_at": None,
         "current_stage": "INITIALIZED",
-        "sources": sources or [],
+        "sources": list(sources) if sources is not None else [],
+        "sources_override_provided": sources is not None,
         "failed_sources": [],
         "crawl_telemetry": {},
         "raw_candidates": [],
