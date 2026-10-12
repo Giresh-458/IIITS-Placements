@@ -105,7 +105,7 @@ async def test_discovery_rejects_malformed_selected_source(monkeypatch, tmp_path
     _write_registry(tmp_path, [bad_source])
     state = create_initial_state()
 
-    with pytest.raises(RuntimeError, match="invalid HTTP\(S\) seed_url"):
+    with pytest.raises(RuntimeError, match=r"invalid HTTP\(S\) seed_url"):
         await PipelineOrchestrator()._do_discovery(state)
 
 
