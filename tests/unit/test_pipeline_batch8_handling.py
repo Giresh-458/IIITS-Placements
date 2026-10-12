@@ -69,19 +69,18 @@ async def test_consolidation_rejects_success_without_required_outputs(monkeypatc
 @pytest.mark.asyncio
 async def test_consolidation_rejects_hold_validation_report(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _write_valid_batch8_outputs(tmp_path)
-    (tmp_path / "artifacts" / "batch_8_final_validation.md").write_text(
-        "# Batch 8 Final Validation\n\nBATCH 8 = HOLD\n", encoding="utf-8"
-    )
 
     def fake_run(args, **kwargs):
+        _write_valid_batch8_outputs(tmp_path)
+        (tmp_path / "artifacts" / "batch_8_final_validation.md").write_text(
+            "# Batch 8 Final Validation\\n\\nBATCH 8 = HOLD\\n", encoding="utf-8"
+        )
         return subprocess.CompletedProcess(args, 0, "done", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     with pytest.raises(RuntimeError, match="does not contain 'BATCH 8 = PASS'"):
         await PipelineOrchestrator()._do_consolidation({"telemetry": {}})
-
 
 @pytest.mark.asyncio
 async def test_consolidation_loads_fresh_validated_outputs(monkeypatch, tmp_path):
