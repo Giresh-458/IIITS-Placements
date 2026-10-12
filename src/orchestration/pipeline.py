@@ -27,13 +27,85 @@ class PipelineOrchestrator:
 
     async def _do_discovery(self, state: PipelineRunState):
         import json
-        with open('artifacts/crawl_seed_registry.json', 'r') as f:
-            seeds = json.load(f)
-        state["sources"] = [s for s in seeds if s.get("source_category") == "P0_DIRECT_EVENT_FEED"]
-        if not state["sources"]:
-            logger.info("No sources provided to pipeline.")
-            state["stop_reason"] = "No sources configured"
-        state["telemetry"]["sources_attempted"] = len(state["sources"])
+        from pathlib import Path
+        from urllib.parse import urlparse
+
+        supported_categories = {
+            "P0_DIRECT_EVENT_FEED",
+            "P0_PUBLIC_EVENT_ARCHIVE",
+            "P0_EVENT_INDEX_WITH_CHILD_DETAILS",
+        }
+
+        if state.get("sources_override_provided", False):
+            seeds = state["sources"]
+            registry_description = "provided source override"
+        else:
+            registry_path = Path("artifacts/crawl_seed_registry.json")
+            try:
+                with registry_path.open("r", encoding="utf-8") as registry_file:
+                    seeds = json.load(registry_file)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    f"Could not load discovery registry {registry_path}: {exc}"
+                ) from exc
+            registry_description = str(registry_path)
+
+        if not isinstance(seeds, list):
+            raise RuntimeError(
+                f"Discovery input from {registry_description} must be a JSON list."
+            )
+
+        selected_sources = []
+        for index, seed in enumerate(seeds):
+            if not isinstance(seed, dict):
+                raise RuntimeError(
+                    f"Discovery source record {index} in {registry_description} "
+                    "must be a JSON object."
+                )
+
+            for field in ("institution", "seed_url", "source_category"):
+                value = seed.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise RuntimeError(
+                        f"Discovery source record {index} in {registry_description} "
+                        f"requires a non-empty {field!r}."
+                    )
+
+            parsed_url = urlparse(seed["seed_url"])
+            if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+                raise RuntimeError(
+                    f"Discovery source record {index} has an invalid HTTP(S) "
+                    f"seed_url: {seed['seed_url']!r}."
+                )
+
+            if seed["source_category"] in supported_categories:
+                limits = seed.get("crawl_limits", {})
+                if not isinstance(limits, dict):
+                    raise RuntimeError(
+                        f"Discovery source record {index} crawl_limits must be an object."
+                    )
+
+                max_pages = limits.get("max_pages", 3)
+                max_depth = limits.get("max_depth", 1)
+                if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages < 1:
+                    raise RuntimeError(
+                        f"Discovery source record {index} max_pages must be a positive integer."
+                    )
+                if isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 0:
+                    raise RuntimeError(
+                        f"Discovery source record {index} max_depth must be a non-negative integer."
+                    )
+                selected_sources.append(seed)
+
+        if not selected_sources:
+            raise RuntimeError(
+                "Discovery found no crawlable sources in "
+                f"{registry_description}; refusing to continue with an empty crawl."
+            )
+
+        state["sources"] = selected_sources
+        state["telemetry"]["sources_attempted"] = len(selected_sources)
+        state["stop_reason"] = None
         return state
 
     async def _do_crawling(self, state: PipelineRunState):
