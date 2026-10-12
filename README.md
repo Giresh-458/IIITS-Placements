@@ -113,14 +113,40 @@ API endpoints documentation will be available at `http://localhost:8000/docs`.
 streamlit run src/dashboard/app.py
 ```
 
-### Running Pipeline Stages
-- **Verify Portal Sources**: `python scripts/verify_sources.py`
-- **Execute Crawler**: `python run_crawler.py`
-- **Normalize Extractions**: `python run_normalization.py`
-- **Apply Business Rules**: `python run_classification.py`
-- **Lead Consolidation**: `python run_batch_8.py`
-- **Database Ingestion**: `python run_batch_9.py`
-- **Change Detection**: `python run_batch_10.py`
+### Current execution paths (important)
+
+The repository currently has two execution surfaces that have **not yet been certified as equivalent**:
+
+- The standalone scripts listed below exchange JSON artifacts under `artifacts/`.
+- `src/orchestration/pipeline.py` defines a separate `PipelineOrchestrator.run()` path.
+- `scripts/run_pipeline.py` currently provides only `health` and `validate-config` commands; it does not invoke `PipelineOrchestrator.run()`.
+
+Do not treat a successful standalone script or a single orchestrator test as an end-to-end pipeline certification. The stage-by-stage review will reconcile these execution paths before a full pipeline run.
+
+### Standalone script inventory
+
+| Purpose | Entry point | Main output or behavior |
+|---|---|---|
+| Verify source portals and refresh the crawl seed registry | `python scripts/verify_sources.py` | Writes `artifacts/crawl_seed_registry.json` |
+| Crawl configured seed pages | `python run_crawler.py` | Writes `artifacts/discovered_events.json` and `artifacts/crawl_telemetry.json` |
+| Rehydrate source evidence and recover event fields | `python run_recovery.py` | Writes recovered extractions, normalized events, evidence audit, and recovery telemetry |
+| Normalize recovered extractions | `python run_normalization.py` | Reads `recovered_event_extractions.json` and writes `normalized_hiring_events.json` |
+| Apply business qualification and produce a report | `python run_batch_6.py` | Writes `classified_events.json` and a Batch 6 report |
+| Discover and verify recruiter contacts | `python run_batch_7.py` | Writes normalized contacts and Batch 7 artifacts |
+| Consolidate outreach leads and contacts | `python run_batch_8.py` | Writes outreach lead/contact artifacts and Batch 8 validation output |
+| Persist and reconcile the current snapshot | `python run_batch_9.py` | Writes Batch 9 persistence reports; requires the configured database |
+| Legacy persistence runner | `python run_batch_10.py` | Also calls `Batch9Ingestion`; it is not currently an independent Change Detection implementation |
+
+`run_classification.py` is an additional legacy classification entry point and is not listed as the preferred runner because its expected result shape differs from the current `apply_business_filters` interface. Use `run_batch_6.py` for the existing Batch 6 report path while that mismatch is reviewed.
+
+Runtime outputs in `artifacts/` are ignored by Git. The two committed registry JSON files are source/configuration inputs and are intentionally retained.
+
+### Repository health and validation tools
+
+- `python scripts/run_pipeline.py validate-config` checks configured crawl budgets and eligibility thresholds.
+- `python scripts/run_pipeline.py health` checks database connectivity only; it does not run the crawler or the pipeline.
+- `python run_validation.py` validates the available source registry, discovered-event, and crawl-telemetry artifacts. It reports recorded telemetry but does not fabricate a crawler exit code or claim browser tests were run.
+- `python run_final_tests.py` runs the default pytest suite and returns pytest's exit code. It does not execute a persistence script.
 
 ### Docker Deployment
 Start API and PostgreSQL services in isolated containers:
@@ -130,36 +156,33 @@ docker compose up -d
 
 ## 8. Test Suite & Validation
 
-The test suite separates deterministic offline tests from tests requiring live external infrastructure.
+Test counts are deliberately not recorded here because they become stale when a branch changes. Use the current checkout's terminal output as the source of truth.
 
-### Deterministic Tests (Offline / In-Memory)
-Requires no running PostgreSQL or external services:
+### Deterministic tests
 ```bash
-python -m pytest tests/deterministic
+python -m pytest tests/deterministic -q
 ```
-*Current status: 22 passed.*
 
-### Unit Test Suite
+### Unit tests
 ```bash
-python -m pytest tests/unit
+python -m pytest tests/unit -q
 ```
-*Current status: 154 passed, 2 skipped (integration-dependent assertions).*
 
-### Full Offline Regression Suite
+### Default test suite
+The default pytest configuration excludes tests marked `live_integration`:
 ```bash
 python -m pytest
 ```
-*Current status: 177 passed, 2 skipped, 13 deselected.*
+The equivalent repository helper is `python run_final_tests.py`; it propagates the test process exit code and does not run database-ingestion scripts as part of testing.
 
-### Live Integration Tests
-Requires live PostgreSQL running on port 5432 and FastAPI running on port 8000:
+### Live integration tests
+These require the documented live services:
 ```bash
 python -m pytest tests/live_integration -m "live_integration"
 ```
-*Current status: 13 passed when services are running.*
 
-## 9. Current Status & Known Limitations
+## 9. Current Known Limitations
 
-- **Source Discovery**: Web portals frequently update UI patterns; portal crawl trees should be re-verified periodically using `scripts/verify_sources.py`.
-- **Live Infrastructure Dependency**: `tests/live_integration` requires an accessible PostgreSQL instance and active API daemon; automated CI environments running offline will deselect them by default via `pytest.ini`.
-- **Batch 13 Certification**: Batch 13 verification artifacts remain in progress pending live staging deployment certification.
+- **Execution paths need reconciliation**: the standalone scripts and `PipelineOrchestrator.run()` are separate paths and have not yet been accepted as equivalent. See the execution-path notes above.
+- **Live infrastructure dependency**: live integration tests require configured services; their actual results must be collected from the environment in which they run.
+- **Pipeline acceptance is stage-based**: no full end-to-end GO decision should be inferred from unit tests alone.
