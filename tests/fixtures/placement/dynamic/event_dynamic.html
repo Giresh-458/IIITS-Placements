@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head><title>Dynamic Drive</title></head>
+<body>
+    <div id="content">Loading...</div>
+    <script>
+        setTimeout(() => {
+            document.getElementById('content').innerHTML = `
+                <h1>Campus Drive by TechCorp Solutions</h1>
+                <p>Role: Software Engineer</p>
+                <p>CTC: 12 LPA</p>
+                <p>Eligible Branches: CSE, IT</p>
+                <p>Event Date: 30 Nov 2026</p>
+            `;
+        }, 500);
+    </script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+# Local environment and secrets
+.env
+.env.*
+.env.local
+!.env.example
+!.env.template
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.json
+htmlcov/
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+
+# Local crawler data and runtime state
+/storage/
+/_backups/
+
+# Runtime pipeline output and local reports in artifacts/
+/artifacts/*
+!/artifacts/crawl_seed_registry.json
+!/artifacts/source_registry.json
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Build outputs
+build/
+dist/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+file

@@ -1,0 +1,42 @@
+# API & Core
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+
+# Database
+asyncpg
+sqlalchemy
+alembic
+psycopg2-binary
+
+# Orchestration & Agents
+langgraph
+langchain-core
+
+# Web & Scraping
+playwright
+crawlee
+
+# LLM
+ollama
+
+# Scheduling
+apscheduler
+
+# Testing
+pytest
+pytest-asyncio
+httpx
+beautifulsoup4
+duckduckgo-search
+requests
+aiosqlite
+
+# Data Processing & Document Parsing
+python-dateutil
+pypdf
+
+# Dashboard & Analytics
+streamlit
+pandas
