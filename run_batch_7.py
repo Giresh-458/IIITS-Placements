@@ -236,7 +236,7 @@ def main():
     md += "\n"
     
     md += "## I. Terminal Events (No-Phone)\n"
-    md += "md += "## K. Identity Required Events\n"
+    md += "## K. Identity Required Events\n"
     md += "| Canonical ID | Company | Status | Reason |\n"
     md += "|---|---|---|---|\n"
     for np in identity_required_events:
