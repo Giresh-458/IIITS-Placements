@@ -4,7 +4,7 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from src.storage.database import DatabaseManager
 from src.orchestration.ingestion import Batch9Ingestion, IngestionError
-from src.storage.models.outreach import Base, OutreachLead
+from src.storage.models.outreach import Base, OutreachLead, OutreachContact, SnapshotMetadata
 
 @pytest.fixture
 async def temp_db_manager():
@@ -73,6 +73,41 @@ async def test_idempotent_ingestion(temp_db_manager, temp_artifacts):
     assert res2["status"] == "SUCCESS"
     assert res2["inserted"] == 0
     assert res2["unchanged"] == 1
+
+
+@pytest.mark.asyncio
+async def test_contact_only_change_is_ingested_as_new_snapshot(temp_db_manager, temp_artifacts):
+    l_path, c_path = temp_artifacts
+    ingester = Batch9Ingestion(temp_db_manager)
+
+    first = await ingester.ingest_snapshot(l_path, c_path)
+    assert first["status"] == "SUCCESS"
+    assert first["inserted"] == 1
+
+    # Keep the leads artifact byte-for-byte identical while changing a contact.
+    contacts = json.loads(open(c_path, "r", encoding="utf-8").read())
+    contacts[0]["phone"] = "+919999999999"
+    with open(c_path, "w", encoding="utf-8") as f:
+        json.dump(contacts, f)
+
+    second = await ingester.ingest_snapshot(l_path, c_path)
+    assert second["status"] == "SUCCESS"
+    assert second["snapshot_id"] != first["snapshot_id"]
+
+    async with temp_db_manager.session_maker() as session:
+        contact = (
+            await session.execute(
+                __import__("sqlalchemy").select(OutreachContact).where(
+                    OutreachContact.contact_id == "contact_1"
+                )
+            )
+        ).scalar_one()
+        snapshots = (
+            await session.execute(__import__("sqlalchemy").select(SnapshotMetadata))
+        ).scalars().all()
+
+    assert contact.phone == "+919999999999"
+    assert len(snapshots) == 2
 
 @pytest.mark.asyncio
 async def test_corrupted_snapshot_fails_closed(temp_db_manager, tmp_path):
