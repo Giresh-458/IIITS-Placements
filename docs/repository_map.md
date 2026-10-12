@@ -42,7 +42,7 @@ The root-level scripts form a separate artifact-driven path, with separate assum
 5. `run_batch_6.py` applies qualification and writes `classified_events.json`.
 6. `run_batch_7.py` performs contact discovery/verification.
 7. `run_batch_8.py` consolidates outreach artifacts.
-8. `run_batch_9.py` ingests and reconciles the current lead/contact snapshot.
+8. `run_batch_9.py` ingests and reconciles the current lead/contact snapshot. Its final validation report currently writes `BATCH 9 = HOLD` unconditionally, even though the code calculates an `is_pass` value; the report is therefore not yet a usable GO signal.
 9. `run_batch_10.py` also calls `Batch9Ingestion`; it is not currently an independent Change Detection implementation. Its report contains a static Docker-pass label, so that label must not be used as evidence of a Docker run.
 
 `run_classification.py` is a legacy alternate classification script. Its expectations differ from the current return shape of `apply_business_filters()`; it is not the preferred Batch 6 reporting path while that contract mismatch remains.
@@ -54,6 +54,7 @@ The root-level scripts form a separate artifact-driven path, with separate assum
 - Recovery and standalone normalization both write `normalized_hiring_events.json`.
 - Extraction and evidence are not independent work units in the orchestrator as currently implemented.
 - Change detection is embedded in persistence code in one path, while the standalone Batch 10 runner duplicates persistence behavior.
+- Batch 9's final validation report currently hardcodes HOLD, while Batch 10's report hardcodes Docker validation as PASSED; neither line is reliable as acceptance evidence.
 - The diagram-level logical stage count and the 10 named orchestrator methods have not been mapped one-to-one in the current repository documentation.
 
 These discrepancies are intentionally recorded, not silently fixed here. Each will be addressed in the corresponding stage review so changes remain narrow and acceptance can be evidence-based.
