@@ -27,10 +27,16 @@ class Batch9Ingestion:
         """
         try:
             leads_hash = self.hash_artifact(leads_path)
-            
+            contacts_hash = self.hash_artifact(contacts_path)
+            # A snapshot represents both the lead and contact artifacts. Hashing
+            # leads alone can incorrectly skip a contact-only update.
+            snapshot_hash = hashlib.sha256(
+                f"leads:{leads_hash}\ncontacts:{contacts_hash}".encode("utf-8")
+            ).hexdigest()
+
             with open(leads_path, 'r', encoding='utf-8') as f:
                 leads_data = json.load(f)
-                
+
             with open(contacts_path, 'r', encoding='utf-8') as f:
                 contacts_data = json.load(f)
         except Exception as e:
@@ -44,15 +50,15 @@ class Batch9Ingestion:
             if "canonical_event_id" not in l or "source_lineage" not in l:
                 raise IngestionError("Missing required provenance in lead")
                 
-        snapshot_id = f"snap_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{leads_hash[:8]}"
+        snapshot_id = f"snap_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{snapshot_hash[:8]}"
 
         async with self.db_manager.session_maker() as session:
             try:
                 # Check for idempotent hash
-                result = await session.execute(select(SnapshotMetadata).where(SnapshotMetadata.source_hash == leads_hash))
+                result = await session.execute(select(SnapshotMetadata).where(SnapshotMetadata.source_hash == snapshot_hash))
                 existing_snap = result.scalar_one_or_none()
                 if existing_snap:
-                    logging.info(f"Snapshot already ingested: {leads_hash}")
+                    logging.info(f"Snapshot already ingested: {snapshot_hash}")
                     # Log lifecycle alert even on bypass
                     detector = ChangeDetector(session, existing_snap.snapshot_id)
                     alerts = await detector.log_snapshot_ingested(len(leads_data), existing_snap.snapshot_id)
@@ -73,7 +79,7 @@ class Batch9Ingestion:
                 snap = SnapshotMetadata(
                     snapshot_id=snapshot_id,
                     source_artifact=leads_path,
-                    source_hash=leads_hash,
+                    source_hash=snapshot_hash,
                     record_count=len(leads_data),
                     ingestion_status="SUCCESS"
                 )
