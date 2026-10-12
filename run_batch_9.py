@@ -58,6 +58,18 @@ async def run_batch_9(leads_path="artifacts/outreach_leads.json", contacts_path=
         input_leads = json.load(f)
         telemetry["input_records"] = len(input_leads)
         
+    # Predeclare both run records so a failure on run 1 still produces a
+    # complete, truthful reconciliation report instead of a KeyError.
+    empty_run = {
+        "inserted": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "rejected": 0,
+        "status": "NOT_ATTEMPTED",
+    }
+    telemetry["run_1"] = empty_run.copy()
+    telemetry["run_2"] = empty_run.copy()
+
     ingester = Batch9Ingestion(db_manager)
     try:
         res1 = await ingester.ingest_snapshot(leads_path, contacts_path)
@@ -65,29 +77,36 @@ async def run_batch_9(leads_path="artifacts/outreach_leads.json", contacts_path=
             "inserted": res1.get("inserted", 0),
             "updated": res1.get("updated", 0),
             "unchanged": res1.get("unchanged", 0),
-            "rejected": res1.get("rejected", 0)
+            "rejected": res1.get("rejected", 0),
+            "status": res1.get("status", "SUCCESS"),
         }
-        
+        telemetry["snapshots_processed"] = 1
+
         # Second run - Exact same snapshot
         res2 = await ingester.ingest_snapshot(leads_path, contacts_path)
         telemetry["run_2"] = {
             "inserted": res2.get("inserted", 0),
             "updated": res2.get("updated", 0),
             "unchanged": res2.get("unchanged", 0),
-            "rejected": res2.get("rejected", 0)
+            "rejected": res2.get("rejected", 0),
+            "status": res2.get("status", "SUCCESS"),
         }
-        
         telemetry["snapshots_processed"] = 2
-        telemetry["inserted"] = telemetry["run_1"]["inserted"] + telemetry["run_2"]["inserted"]
-        telemetry["updated"] = telemetry["run_1"]["updated"] + telemetry["run_2"]["updated"]
-        telemetry["unchanged"] = telemetry["run_1"]["unchanged"] + telemetry["run_2"]["unchanged"]
-        telemetry["rejected"] = telemetry["run_1"]["rejected"] + telemetry["run_2"]["rejected"]
-        
+
     except IngestionError as e:
         logging.error(f"Ingestion failed: {e}")
         telemetry["exceptions"] += 1
-        telemetry["rejected"] = len(input_leads)
         telemetry["stop_reason"] = "INGESTION_ERROR"
+        if telemetry["run_1"]["status"] == "NOT_ATTEMPTED":
+            telemetry["run_1"]["status"] = "FAILED"
+            telemetry["run_1"]["rejected"] = len(input_leads)
+        elif telemetry["run_2"]["status"] == "NOT_ATTEMPTED":
+            telemetry["run_2"]["status"] = "FAILED"
+            telemetry["run_2"]["rejected"] = len(input_leads)
+
+    # Totals must include a successful first run if the second run fails.
+    for metric in ("inserted", "updated", "unchanged", "rejected"):
+        telemetry[metric] = telemetry["run_1"][metric] + telemetry["run_2"][metric]
         
     # Database counts
     async with db_manager.session_maker() as session:
@@ -111,12 +130,14 @@ Database records currently present = {db_total}
 
 ## Idempotency & Ingestion
 Run 1:
+status = {telemetry['run_1']['status']}
 inserted = {telemetry['run_1']['inserted']}
 updated = {telemetry['run_1']['updated']}
 unchanged = {telemetry['run_1']['unchanged']}
 rejected = {telemetry['run_1']['rejected']}
 
 Run 2 (Exact same snapshot):
+status = {telemetry['run_2']['status']}
 inserted = {telemetry['run_2']['inserted']}
 updated = {telemetry['run_2']['updated']}
 unchanged = {telemetry['run_2']['unchanged']}
