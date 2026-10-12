@@ -1,89 +1,138 @@
 import json
-import asyncio
-from datetime import datetime
-from src.models.domain import HiringEventCandidate
-from src.telemetry.crawl_metrics import CrawlTelemetry
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
 from pydantic import ValidationError
 
-def run_validation():
-    print("============================================================")
-    print("1. PER-SOURCE EVENT COUNTS")
-    print("============================================================")
-    try:
-        with open('artifacts/discovered_events.json') as f:
-            events = [HiringEventCandidate(**e) for e in json.load(f)]
-            
-        with open('artifacts/crawl_telemetry.json') as f:
-            telemetry = CrawlTelemetry(**json.load(f))
-            
-        source_counts = {}
-        recent_counts = {}
-        for e in events:
-            source_counts[e.institution] = source_counts.get(e.institution, 0) + 1
-            if e.is_recent:
-                recent_counts[e.institution] = recent_counts.get(e.institution, 0) + 1
-                
-        print(f"{'Source':<35} | {'Events Found':<12} | {'Recent Events':<13}")
-        print("-" * 65)
-        for src in ["RGUKT Basar", "Trident Academy of Technology", "GIET", "GIET Archive", "AAA College of Engineering & Technology"]:
-            print(f"{src:<35} | {source_counts.get(src, 0):<12} | {recent_counts.get(src, 0):<13}")
-            
-        print("\nTOTAL_EVENTS =", sum(source_counts.values()))
-            
-        print("\n--- Discovered Events ---")
-        for src in ["RGUKT Basar", "Trident Academy of Technology", "GIET", "GIET Archive", "AAA College of Engineering & Technology"]:
-            src_events = [e for e in events if e.institution == src]
-            if src_events:
-                e = src_events[0]
-                print(f"\nInstitution: {e.institution}")
-                print(f"Company: {e.company_name}")
-                print(f"Role: {e.role}")
-                print(f"Date: {e.event_date}")
-                print(f"URL: {e.event_url}")
-                print(f"Evidence Excerpt: {list(e.evidence.values())[0]['text']}")
-            else:
-                print(f"\nInstitution: {src} -> ZERO EVENTS. Investigated: Checked telemetry stop reason.")
-                
-    except Exception as ex:
-        print("Error reading artifacts:", ex)
-        
-    print("\n============================================================")
-    print("2. PER-SOURCE PAGE BUDGET & TELEMETRY")
-    print("============================================================")
-    print(f"{'Source':<35} | {'Max Pages':<9} | {'Attempted':<9} | {'Events':<6} | {'Stop Reason'}")
-    print("-" * 85)
-    for src, stats in telemetry.source_stats.items():
-        print(f"{src:<35} | 15        | {stats['pages_visited']:<9} | {stats['events_found']:<6} | {stats['stop_reason']}")
+from src.models.domain import HiringEventCandidate
+from src.telemetry.crawl_metrics import CrawlTelemetry
 
-    print("\n============================================================")
-    print("4. PLAYWRIGHT PROOF (Logic)")
-    print("============================================================")
-    import pytest
-    print("A. Static HTML event fixture: browser_escalations = 0")
-    print("B. JS-rendered event fixture: browser_pages = 1, event extracted = TRUE")
-    print("C. Browser-failure fixture: browser_failures = 1, crawler remains bounded, explicit error recorded.")
-    print("\nRunning actual Playwright execution tests via pytest...")
 
-    print("\n============================================================")
-    print("10. CLEAN EXIT PROOF")
-    print("============================================================")
-    print("process_exited_normally = TRUE")
-    print("exit_code = 0")
-    print(f"duration_seconds = {telemetry.duration_seconds}")
-    print("stop_reason = ALL SOURCES EXHAUSTED QUEUE OR BUDGET")
+ARTIFACT_DIR = Path("artifacts")
+REQUIRED_ARTIFACTS = (
+    "crawl_seed_registry.json",
+    "discovered_events.json",
+    "crawl_telemetry.json",
+)
 
-    print("\n============================================================")
-    print("11. ARTIFACT VALIDATION")
-    print("============================================================")
-    try:
-        with open('artifacts/crawl_seed_registry.json') as f:
-            registry = json.load(f)
-            print(f"artifacts/crawl_seed_registry.json : {len(registry)} records : VALID")
-            
-        print(f"artifacts/discovered_events.json : {len(events)} records : VALID")
-        print(f"artifacts/crawl_telemetry.json : 1 record : VALID")
-    except Exception as e:
-        print("Artifact Validation Failed", e)
 
-if __name__ == '__main__':
-    run_validation()
+def _load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as artifact_file:
+        return json.load(artifact_file)
+
+
+def run_validation() -> int:
+    """Validate available crawl artifacts and report recorded telemetry.
+
+    This checks artifact presence and schema only. It does not claim that a
+    crawler process exited successfully or that browser fixtures were executed;
+    those facts must come from actual process results and test output.
+    """
+    errors = []
+    payloads = {}
+
+    for name in REQUIRED_ARTIFACTS:
+        path = ARTIFACT_DIR / name
+        if not path.is_file():
+            errors.append(f"Missing required artifact: {path}")
+            continue
+        try:
+            payloads[name] = _load_json(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"Cannot read {path}: {type(exc).__name__}: {exc}")
+
+    if errors:
+        print("ARTIFACT_VALIDATION = FAIL")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+
+    registry = payloads["crawl_seed_registry.json"]
+    if not isinstance(registry, list):
+        errors.append("crawl_seed_registry.json must contain a JSON list.")
+    else:
+        for index, source in enumerate(registry):
+            if not isinstance(source, dict):
+                errors.append(f"Source registry record {index} must be a JSON object.")
+                continue
+            for field in ("institution", "seed_url", "source_category"):
+                if not isinstance(source.get(field), str) or not source[field].strip():
+                    errors.append(
+                        f"Source registry record {index} requires a non-empty {field!r}."
+                    )
+
+    raw_events = payloads["discovered_events.json"]
+    events = []
+    if not isinstance(raw_events, list):
+        errors.append("discovered_events.json must contain a JSON list.")
+    else:
+        for index, event in enumerate(raw_events):
+            try:
+                events.append(HiringEventCandidate.model_validate(event))
+            except (ValidationError, TypeError, ValueError) as exc:
+                errors.append(
+                    f"Discovered event record {index} failed schema validation: {exc}"
+                )
+
+    raw_telemetry = payloads["crawl_telemetry.json"]
+    telemetry = None
+    if not isinstance(raw_telemetry, dict):
+        errors.append("crawl_telemetry.json must contain a JSON object.")
+    else:
+        try:
+            telemetry = CrawlTelemetry.model_validate(raw_telemetry)
+        except (ValidationError, TypeError, ValueError) as exc:
+            errors.append(f"crawl_telemetry.json failed schema validation: {exc}")
+
+    if errors:
+        print("ARTIFACT_VALIDATION = FAIL")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+
+    source_counts = Counter(event.institution for event in events)
+    recent_counts = Counter(event.institution for event in events if event.is_recent)
+
+    print("ARTIFACT_SCHEMA_VALIDATION = PASS")
+    print(f"source_registry_records = {len(registry)}")
+    print(f"discovered_event_records = {len(events)}")
+    print(f"crawl_run_id = {telemetry.run_id}")
+    print(f"crawl_duration_seconds = {telemetry.duration_seconds}")
+    print(f"crawl_stop_reason_recorded = {telemetry.stop_reason}")
+    print(f"sources_attempted = {telemetry.sources_attempted}")
+    print(f"sources_succeeded = {telemetry.sources_succeeded}")
+    print(f"sources_failed = {telemetry.sources_failed}")
+    print(f"pages_attempted = {telemetry.pages_attempted}")
+    print(f"pages_succeeded = {telemetry.pages_succeeded}")
+    print(f"pages_failed = {telemetry.pages_failed}")
+    print(f"http_requests = {telemetry.http_requests}")
+    print(f"browser_pages = {telemetry.browser_pages}")
+    print(f"browser_escalations = {telemetry.browser_escalations}")
+    print(f"browser_failures = {telemetry.browser_failures}")
+    print(f"pdfs_processed = {telemetry.pdfs_processed}")
+    print(f"crawler_exceptions_recorded = {len(telemetry.exceptions)}")
+
+    print("\nEVENT_COUNTS_BY_INSTITUTION")
+    print(f"{'Institution':<40} | {'Events':>6} | {'Recent':>6}")
+    print("-" * 59)
+    for institution in sorted(set(source_counts) | set(recent_counts)):
+        print(
+            f"{institution:<40} | {source_counts[institution]:>6} | "
+            f"{recent_counts[institution]:>6}"
+        )
+
+    if telemetry.exceptions:
+        print(
+            "\nNOTE: Crawl telemetry records exceptions. Schema validation does not "
+            "mean the crawl itself was error-free."
+        )
+    print(
+        "\nThis report validates the artifacts currently on disk; it does not "
+        "prove crawler process exit status or browser-fixture execution."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_validation())
