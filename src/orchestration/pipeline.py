@@ -108,17 +108,44 @@ class PipelineOrchestrator:
         return state
 
     async def _do_contact_intelligence(self, state: PipelineRunState):
-        import subprocess
-        # Rely on run_batch_7 for bounded discovery
-        res = subprocess.run("python run_batch_7.py", shell=True, capture_output=True, text=True)
-        if res.returncode != 0:
-            logger.warning(f"Contact Intelligence failed: {res.stderr}")
         import json
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        # Batch 7 owns this output. Remove a previous run's artifact before
+        # starting so a failed or incomplete execution cannot reuse stale data.
+        contacts_path = Path("artifacts/normalized_contacts.json")
         try:
-            with open('artifacts/normalized_contacts.json', 'r', encoding='utf-8') as f:
-                state["contacts"] = json.load(f)
-        except:
-            state["contacts"] = []
+            contacts_path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not remove previous Batch 7 output {contacts_path}: {exc}"
+            ) from exc
+
+        res = subprocess.run(
+            [sys.executable, "run_batch_7.py"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0:
+            details = "\n".join(
+                part.strip() for part in (res.stderr, res.stdout) if part and part.strip()
+            )
+            raise RuntimeError(
+                f"Batch 7 failed with exit code {res.returncode}: "
+                f"{details or 'no stdout/stderr captured'}"
+            )
+
+        if not contacts_path.is_file():
+            raise RuntimeError(
+                "Batch 7 exited successfully but did not produce "
+                f"{contacts_path}; refusing to continue with missing output."
+            )
+
+        with contacts_path.open("r", encoding="utf-8") as f:
+            state["contacts"] = json.load(f)
         return state
 
     async def _do_consolidation(self, state: PipelineRunState):
