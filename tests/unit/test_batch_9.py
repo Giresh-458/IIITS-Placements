@@ -1,6 +1,7 @@
 import pytest
 import json
 import os
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from src.storage.database import DatabaseManager
 from src.orchestration.ingestion import Batch9Ingestion, IngestionError
@@ -85,7 +86,8 @@ async def test_contact_only_change_is_ingested_as_new_snapshot(temp_db_manager, 
     assert first["inserted"] == 1
 
     # Keep the leads artifact byte-for-byte identical while changing a contact.
-    contacts = json.loads(open(c_path, "r", encoding="utf-8").read())
+    with open(c_path, "r", encoding="utf-8") as f:
+        contacts = json.load(f)
     contacts[0]["phone"] = "+919999999999"
     with open(c_path, "w", encoding="utf-8") as f:
         json.dump(contacts, f)
@@ -97,13 +99,13 @@ async def test_contact_only_change_is_ingested_as_new_snapshot(temp_db_manager, 
     async with temp_db_manager.session_maker() as session:
         contact = (
             await session.execute(
-                __import__("sqlalchemy").select(OutreachContact).where(
+                select(OutreachContact).where(
                     OutreachContact.contact_id == "contact_1"
                 )
             )
         ).scalar_one()
         snapshots = (
-            await session.execute(__import__("sqlalchemy").select(SnapshotMetadata))
+            await session.execute(select(SnapshotMetadata))
         ).scalars().all()
 
     assert contact.phone == "+919999999999"
