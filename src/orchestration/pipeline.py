@@ -87,11 +87,19 @@ class PipelineOrchestrator:
 
                 max_pages = limits.get("max_pages", 3)
                 max_depth = limits.get("max_depth", 1)
-                if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages < 1:
+                if (
+                    isinstance(max_pages, bool)
+                    or not isinstance(max_pages, int)
+                    or max_pages < 1
+                ):
                     raise RuntimeError(
                         f"Discovery source record {index} max_pages must be a positive integer."
                     )
-                if isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 0:
+                if (
+                    isinstance(max_depth, bool)
+                    or not isinstance(max_depth, int)
+                    or max_depth < 0
+                ):
                     raise RuntimeError(
                         f"Discovery source record {index} max_depth must be a non-negative integer."
                     )
