@@ -149,17 +149,87 @@ class PipelineOrchestrator:
         return state
 
     async def _do_consolidation(self, state: PipelineRunState):
-        import subprocess
-        res = subprocess.run("python run_batch_8.py", shell=True, capture_output=True, text=True)
-        if res.returncode != 0:
-            logger.warning(f"Consolidation failed: {res.stderr}")
         import json
-        try:
-            with open('artifacts/outreach_leads.json', 'r', encoding='utf-8') as f:
-                state["consolidated_leads"] = json.load(f)
-            state["telemetry"]["consolidated_leads"] = len(state["consolidated_leads"])
-        except:
-            state["consolidated_leads"] = []
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        # Remove outputs from earlier runs before Batch 8 starts. This prevents
+        # a failed run from silently reusing an old leads/contacts artifact.
+        output_paths = [
+            Path("artifacts/outreach_leads.json"),
+            Path("artifacts/outreach_contacts.json"),
+            Path("artifacts/outreach_telemetry.json"),
+            Path("artifacts/batch_8_reconciliation.md"),
+            Path("artifacts/batch_8_final_validation.md"),
+        ]
+        for output_path in output_paths:
+            try:
+                output_path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not remove previous Batch 8 output {output_path}: {exc}"
+                ) from exc
+
+        res = subprocess.run(
+            [sys.executable, "run_batch_8.py"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0:
+            details = "\n".join(
+                part.strip() for part in (res.stderr, res.stdout) if part and part.strip()
+            )
+            raise RuntimeError(
+                f"Batch 8 failed with exit code {res.returncode}: "
+                f"{details or 'no stdout/stderr captured'}"
+            )
+
+        required_paths = [
+            Path("artifacts/outreach_leads.json"),
+            Path("artifacts/outreach_contacts.json"),
+            Path("artifacts/outreach_telemetry.json"),
+            Path("artifacts/batch_8_final_validation.md"),
+        ]
+        missing_paths = [str(path) for path in required_paths if not path.is_file()]
+        if missing_paths:
+            raise RuntimeError(
+                "Batch 8 exited successfully but did not produce required fresh "
+                f"artifacts: {', '.join(missing_paths)}"
+            )
+
+        validation_report = Path("artifacts/batch_8_final_validation.md").read_text(
+            encoding="utf-8"
+        )
+        if "BATCH 8 = PASS" not in validation_report:
+            raise RuntimeError(
+                "Batch 8 exited successfully but its final validation report "
+                "does not contain 'BATCH 8 = PASS'."
+            )
+
+        with Path("artifacts/outreach_leads.json").open("r", encoding="utf-8") as f:
+            leads = json.load(f)
+        with Path("artifacts/outreach_contacts.json").open("r", encoding="utf-8") as f:
+            contacts = json.load(f)
+        with Path("artifacts/outreach_telemetry.json").open("r", encoding="utf-8") as f:
+            batch_8_telemetry = json.load(f)
+
+        if not isinstance(leads, list):
+            raise RuntimeError("Batch 8 outreach_leads.json must contain a JSON list.")
+        if not isinstance(contacts, list):
+            raise RuntimeError("Batch 8 outreach_contacts.json must contain a JSON list.")
+        if not isinstance(batch_8_telemetry, dict):
+            raise RuntimeError("Batch 8 outreach_telemetry.json must contain a JSON object.")
+        if batch_8_telemetry.get("exceptions", 0) != 0:
+            raise RuntimeError(
+                "Batch 8 validation passed but telemetry reports exceptions: "
+                f"{batch_8_telemetry.get('exceptions')}"
+            )
+
+        state["consolidated_leads"] = leads
+        state["telemetry"]["consolidated_leads"] = len(leads)
+        state["telemetry"]["batch_8_telemetry"] = batch_8_telemetry
         return state
 
     async def _do_persistence(self, state: PipelineRunState):
