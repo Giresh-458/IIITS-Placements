@@ -62,6 +62,7 @@ async def check_database_health() -> int:
     """Check the configured database connection; do not imply other services ran."""
     manager = DatabaseManager()
     healthy = False
+    failure_type = None
     disconnect_failed = False
 
     try:
@@ -69,7 +70,7 @@ async def check_database_health() -> int:
         healthy = await manager.check_health()
     except Exception as exc:
         # Deliberately avoid printing connection strings or full driver errors.
-        print(f"DATABASE_CONNECTIVITY = FAIL ({type(exc).__name__})")
+        failure_type = type(exc).__name__
     finally:
         try:
             await manager.disconnect()
@@ -77,6 +78,9 @@ async def check_database_health() -> int:
             disconnect_failed = True
             print(f"DATABASE_DISCONNECT = FAIL ({type(exc).__name__})")
 
+    if failure_type:
+        print(f"DATABASE_CONNECTIVITY = FAIL ({failure_type})")
+        return 1
     if healthy and not disconnect_failed:
         print("DATABASE_CONNECTIVITY = PASS")
         return 0
