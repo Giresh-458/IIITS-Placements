@@ -121,7 +121,7 @@ The repository currently has two execution surfaces that have **not yet been cer
 - `src/orchestration/pipeline.py` defines a separate `PipelineOrchestrator.run()` path.
 - `scripts/run_pipeline.py` currently provides only `health` and `validate-config` commands; it does not invoke `PipelineOrchestrator.run()`.
 
-Do not treat a successful standalone script or a single orchestrator test as an end-to-end pipeline certification. The stage-by-stage review will reconcile these execution paths before a full pipeline run.
+Do not treat a successful standalone script or a single orchestrator test as an end-to-end pipeline certification. The stage-by-stage review will reconcile these execution paths before a full pipeline run. A detailed code-level inventory is maintained in [`docs/repository_map.md`](docs/repository_map.md).
 
 ### Standalone script inventory
 
