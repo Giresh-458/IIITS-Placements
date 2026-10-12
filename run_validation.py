@@ -39,7 +39,7 @@ def run_validation() -> int:
             continue
         try:
             payloads[name] = _load_json(path)
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             errors.append(f"Cannot read {path}: {type(exc).__name__}: {exc}")
 
     if errors:
