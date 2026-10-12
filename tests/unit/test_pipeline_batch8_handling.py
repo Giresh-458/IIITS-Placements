@@ -73,7 +73,7 @@ async def test_consolidation_rejects_hold_validation_report(monkeypatch, tmp_pat
     def fake_run(args, **kwargs):
         _write_valid_batch8_outputs(tmp_path)
         (tmp_path / "artifacts" / "batch_8_final_validation.md").write_text(
-            "# Batch 8 Final Validation\\n\\nBATCH 8 = HOLD\\n", encoding="utf-8"
+            "# Batch 8 Final Validation\n\nBATCH 8 = HOLD\n", encoding="utf-8"
         )
         return subprocess.CompletedProcess(args, 0, "done", "")
 
