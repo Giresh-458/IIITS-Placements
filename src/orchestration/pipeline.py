@@ -152,6 +152,10 @@ class PipelineOrchestrator:
                 f"Crawling: {telemetry.sources_failed} of "
                 f"{telemetry.sources_attempted} eligible sources had no successful page."
             )
+        if telemetry.pages_failed:
+            state["warnings"].append(
+                f"Crawling: {telemetry.pages_failed} page request(s) failed after retries."
+            )
         return state
 
     async def _do_extraction(self, state: PipelineRunState):
