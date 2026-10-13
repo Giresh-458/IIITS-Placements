@@ -118,15 +118,40 @@ class PipelineOrchestrator:
 
     async def _do_crawling(self, state: PipelineRunState):
         from src.crawler.engine import CrawlerEngine
+
         engine = CrawlerEngine(state["sources"], max_pages=3, max_depth=1)
         events, telemetry = await engine.run()
-        state["crawl_telemetry"] = telemetry.model_dump(mode='json')
+        state["crawl_telemetry"] = telemetry.model_dump(mode="json")
         state["telemetry"]["crawl_telemetry"] = state["crawl_telemetry"]
-        state["raw_candidates"] = [e.model_dump(mode='json') for e in events]
-        state["telemetry"]["sources_succeeded"] = telemetry.sources_attempted
+        state["raw_candidates"] = [event.model_dump(mode="json") for event in events]
+
+        # Attempted sources are not necessarily successful sources.
+        state["telemetry"]["sources_succeeded"] = telemetry.sources_succeeded
+        state["telemetry"]["sources_failed"] = telemetry.sources_failed
         state["telemetry"]["urls_fetched"] = telemetry.pages_attempted
         state["telemetry"]["http_requests"] = telemetry.http_requests
         state["telemetry"]["browser_pages"] = telemetry.browser_pages
+        state["telemetry"]["exceptions"] = len(telemetry.exceptions)
+        state["failed_sources"] = [
+            {
+                "institution": institution,
+                "stop_reason": stats.get("stop_reason"),
+                "pages_attempted": stats.get("pages_visited", 0),
+                "pages_succeeded": stats.get("pages_succeeded", 0),
+            }
+            for institution, stats in telemetry.source_stats.items()
+            if stats.get("pages_succeeded", 0) == 0
+        ]
+
+        if telemetry.sources_attempted > 0 and telemetry.sources_succeeded == 0:
+            raise RuntimeError(
+                f"Crawling failed for all {telemetry.sources_attempted} eligible sources."
+            )
+        if telemetry.sources_failed:
+            state["warnings"].append(
+                f"Crawling: {telemetry.sources_failed} of "
+                f"{telemetry.sources_attempted} eligible sources had no successful page."
+            )
         return state
 
     async def _do_extraction(self, state: PipelineRunState):
