@@ -176,28 +176,28 @@ def extract_from_text(text: str, url: str) -> Dict[str, Any]:
 
 def _infer_campus_mode(text: str) -> str | None:
     """Infer mode only from explicit drive-mode phrases, not generic page words."""
-    normalized = re.sub(r"\\s+", " ", text or "").lower()
+    normalized = re.sub(r"\s+", " ", text or "").lower()
 
     if re.search(
-        r"\\bphysical\\s+campus\\s+drive\\b"
-        r"|\\bon[- ]campus\\s+(?:recruitment\\s+)?drive\\b"
-        r"|\\bmode\\s+of\\s+(?:the\\s+)?drive\\s*[:|=-]\\s*physical\\b",
+        r"\bphysical\s+campus\s+drive\b"
+        r"|\bon[- ]campus\s+(?:recruitment\s+)?drive\b"
+        r"|\bmode\s+of\s+(?:the\s+)?drive\s*[:|=-]\s*physical\b",
         normalized,
     ):
         return "ON_CAMPUS"
 
     if re.search(
-        r"\\b(?:pool|pooled)\\s+campus\\s+(?:recruitment\\s+)?drive\\b"
-        r"|\\bmode\\s+of\\s+(?:the\\s+)?drive\\s*[:|=-]\\s*(?:pool|pooled)\\b",
+        r"\b(?:pool|pooled)\s+campus\s+(?:recruitment\s+)?drive\b"
+        r"|\bmode\s+of\s+(?:the\s+)?drive\s*[:|=-]\s*(?:pool|pooled)\b",
         normalized,
     ):
         return "POOL_CAMPUS"
 
     if re.search(
-        r"\\b(?:virtual|online)\\s+(?:campus\\s+)?(?:recruitment\\s+)?drive\\b"
-        r"|\\bmode\\s+of\\s+(?:the\\s+)?drive\\s*[:|=-]\\s*(?:virtual|online)\\b"
-        r"|\\b(?:campus\\s+)?drive\\s+(?:will be|is being|was)\\s+"
-        r"(?:held|conducted)\\s+(?:online|virtually)\\b",
+        r"\b(?:virtual|online)\s+(?:campus\s+)?(?:recruitment\s+)?drive\b"
+        r"|\bmode\s+of\s+(?:the\s+)?drive\s*[:|=-]\s*(?:virtual|online)\b"
+        r"|\b(?:campus\s+)?drive\s+(?:will be|is being|was)\s+"
+        r"(?:held|conducted)\s+(?:online|virtually)\b",
         normalized,
     ):
         return "VIRTUAL"
