@@ -12,15 +12,15 @@ def test_child_url_selection_is_deterministic_and_respects_remaining_budget():
     engine = CrawlerEngine(seeds=[])
     scheduled = {"https://example.edu/start"}
     selected = engine._select_child_urls(
-        hrefs=[
-            "/careers/a",
-            "/notices/b",
-            "/careers/a",
-            "https://external.example/hiring",
-            "/about",
+        links=[
+            ("/careers/a", "Open careers"),
+            ("/notices/b", "Placement notices"),
+            ("/careers/a", "Open careers again"),
+            ("https://external.example/hiring", "Hiring"),
+            ("/about", "About"),
+            ("/placementnotice/wp-login.php?action=logout", "Log out"),
         ],
         page_url="https://example.edu/index",
-        page_text="Latest college updates",
         seed_url="https://example.edu/start",
         scheduled_urls=scheduled,
         remaining_slots=2,
@@ -33,9 +33,8 @@ def test_child_url_selection_is_deterministic_and_respects_remaining_budget():
     assert len(scheduled) == 3
     assert all(urlparse(url).netloc == "example.edu" for url in selected)
     assert engine._select_child_urls(
-        ["/careers/extra"],
+        [("/careers/extra", "Careers")],
         "https://example.edu/index",
-        "Latest college updates",
         "https://example.edu/start",
         scheduled,
         remaining_slots=0,
@@ -146,3 +145,78 @@ async def test_pipeline_crawling_fails_closed_when_every_source_fails(monkeypatc
     assert state["telemetry"]["sources_succeeded"] == 0
     assert state["telemetry"]["sources_failed"] == 2
     assert len(state["failed_sources"]) == 2
+
+
+
+def test_record_page_success_updates_aggregate_and_per_source_counters():
+    engine = CrawlerEngine(seeds=[])
+
+    engine._record_page_success("Example College")
+
+    stats = engine.telemetry.source_stats["Example College"]
+    assert engine.telemetry.pages_succeeded == 1
+    assert engine.telemetry.requests_succeeded == 1
+    assert stats["pages_succeeded"] == 1
+    assert stats["pages_visited"] == 0
+
+
+@pytest.mark.asyncio
+async def test_terminal_crawl_failure_callback_records_403_and_attempt_counts(monkeypatch):
+    captured = {}
+
+    class FakeCrawler:
+        def __init__(self, **kwargs):
+            self.request_handler = kwargs["request_handler"]
+            self.error_callback = None
+            self.failed_callback = None
+
+        def error_handler(self, callback):
+            self.error_callback = callback
+            return callback
+
+        def failed_request_handler(self, callback):
+            self.failed_callback = callback
+            return callback
+
+        async def run(self, requests):
+            request = requests[0]
+            captured["request"] = request
+            context = type(
+                "FakeContext",
+                (),
+                {"request": request},
+            )()
+            await self.error_callback(
+                context, RuntimeError("Assuming the session is blocked based on HTTP status code 403")
+            )
+            await self.error_callback(
+                context, RuntimeError("Assuming the session is blocked based on HTTP status code 403")
+            )
+            await self.failed_callback(
+                context, RuntimeError("Assuming the session is blocked based on HTTP status code 403")
+            )
+
+    monkeypatch.setattr("src.crawler.engine.BeautifulSoupCrawler", FakeCrawler)
+    engine = CrawlerEngine(seeds=[{
+        "institution": "Example College",
+        "seed_url": "https://example.edu/placements",
+        "source_category": "P0_DIRECT_EVENT_FEED",
+        "crawl_limits": {"max_pages": 3, "max_depth": 1},
+    }])
+
+    events, telemetry = await engine.run()
+
+    stats = telemetry.source_stats["Example College"]
+    assert events == []
+    assert telemetry.sources_attempted == 1
+    assert telemetry.sources_succeeded == 0
+    assert telemetry.sources_failed == 1
+    assert telemetry.pages_attempted == 1
+    assert telemetry.pages_failed == 1
+    assert telemetry.http_requests == 3
+    assert telemetry.retries == 2
+    assert stats["pages_visited"] == 1
+    assert stats["pages_succeeded"] == 0
+    assert stats["pages_failed"] == 1
+    assert stats["stop_reason"] == "BLOCKED_OR_FORBIDDEN"
+    assert len(telemetry.exceptions) == 1
