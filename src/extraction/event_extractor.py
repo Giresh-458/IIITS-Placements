@@ -74,7 +74,7 @@ def extract_from_text(text: str, url: str) -> Dict[str, Any]:
     conducting_pattern = (
         r"\b("
         + name_token
-        + r"(?:[ \t]+(?:" + name_token + r"|" + suffix_token + r")){0,5}"
+        + r"(?:(?:[ \t]+" + name_token + r"|[ \t\r\n]+" + suffix_token + r")){0,5}"
         + r")[ \t\r\n]+(?i:will be conducting|is conducting|are conducting|will conduct)"
         + r"[ \t\r\n]+(?:(?i:a|the)[ \t\r\n]+)?"
         + r"(?i:campus[ \t\r\n]+)?(?i:recruitment|placement|hiring)[ \t\r\n]+(?i:drive)\b"
