@@ -106,7 +106,7 @@ async def test_pipeline_crawling_propagates_measured_source_outcomes(monkeypatch
     ]
     assert state["warnings"] == [
         "Crawling: 1 of 2 eligible sources had no successful page.",
-        "Crawling: 1 page request(s) failed after retries.",
+        "Crawling: 1 page request(s) failed.",
     ]
 
 
