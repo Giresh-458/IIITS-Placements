@@ -144,3 +144,31 @@ def test_adversarial_business_tests():
     assert res.currentness == "COMPLETED_RECENT"
     assert res.temporal_status == "HOT_OUTREACH_LEAD"
     assert res.target_fit == "FILTERED_OUT"
+
+
+
+def test_default_as_of_uses_current_date_for_temporal_classification(monkeypatch):
+    from src.classification import business_rules
+
+    # A fixed test clock makes the regression deterministic: a 10 October event
+    # must be recently completed on 13 October, not marked as upcoming.
+    monkeypatch.setattr(
+        business_rules,
+        "current_as_of_date",
+        lambda: datetime(2026, 10, 13),
+    )
+    ev = NormalizedHiringEvent(
+        event_id="transenergy",
+        institution="AAA College of Engineering & Technology",
+        company_name="Transenergy Pvt. Ltd.",
+        event_date="2026-10-10",
+        role_family="UNKNOWN",
+        campus_mode="UNKNOWN",
+    )
+
+    result = business_rules.classify_event(ev)
+
+    assert result.currentness == "COMPLETED_RECENT"
+    assert result.temporal_status == "HOT_OUTREACH_LEAD"
+    # Missing role, branch/batch, and CTC data should keep the record in review.
+    assert result.target_fit == "REVIEW"
