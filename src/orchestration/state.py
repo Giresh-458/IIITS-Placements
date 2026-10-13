@@ -19,6 +19,8 @@ class RunTelemetry(TypedDict):
     normalized_events: int
     qualified_events: int
     rejected_events: int
+    evidence_records: int
+    evidence_events_without_records: int
     consolidated_leads: int
     contacts_discovered: int
     phones_discovered: int
@@ -126,6 +128,8 @@ def create_initial_state(run_id: str = None, sources: List[Dict[str, Any]] = Non
             "normalized_events": 0,
             "qualified_events": 0,
             "rejected_events": 0,
+            "evidence_records": 0,
+            "evidence_events_without_records": 0,
             "consolidated_leads": 0,
             "contacts_discovered": 0,
             "phones_discovered": 0,
