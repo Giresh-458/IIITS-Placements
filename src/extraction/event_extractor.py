@@ -24,6 +24,7 @@ def extract_from_text(text: str, url: str) -> Dict[str, Any]:
         
     # Company extraction
     company_patterns = [
+        r"^\s*([A-Z][A-Za-z0-9&.,'() ]{1,60}?)\s*[–—-]\s*(?:GD Schedule\b|Group Discussion\b|Interview Schedule\b|Virtual Campus Drive\b|Campus Drive\b|Recruitment Drive\b)",
         r'(?:Company Name|Company|Company Profile|Hiring Company|Recruiting Company|Name of the Company|Company & Name)\s*(?:\||:|-)\s*([A-Z][a-zA-Z0-9\s&.,()]+?(?:LLP|Private Limited|Pvt\.? Ltd\.?|Ltd\.?|Inc\.?|Limited|Solutions|Technologies|Software|Group|Services|Enterprises|LLC|Corporation)?)(?=[\s\n\.,]+(?:for|GIET|Trident|Register|Read|Dear|on|at|with|Drive|Chennai|scheduled)|\n|\.|$|\|)',
         r'\b([A-Z][a-zA-Z0-9\s&(),\.\-]+?(?:LLP|Private Limited|Pvt\.? Ltd\.?|Ltd\.?|Inc\.?|Limited|Solutions|Technologies|Software|Group|Services|Enterprises|LLC|Corporation)?)\s*(?:\ufffd|\-|–)?\s*hiring for',
         r'(?:Campus Recruitment Drive|Physical Campus Drive|On-Campus Recruitment Drive|On campus drive|Placement Drive|Campus Drive)\s*(?:by|with|of)\s*([A-Z][a-zA-Z0-9\s&()]+?(?:LLP|Private Limited|Pvt\.? Ltd\.?|Ltd\.?|Inc\.?|Limited|Solutions|Technologies|Software|Group|Services|Enterprises|LLC|Corporation)?)(?=[\s\n\.,]+(?:for|GIET|Trident|Register|Read|Dear|on|at|with|Drive|Chennai|scheduled)|\n|\.|$)',
@@ -268,8 +269,10 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
         if any(token in label for token in chrome_tokens):
             element.decompose()
 
-    # Prefer a single article-body container. Multiple matching bodies usually
-    # indicate an archive page or a template with multiple post cards.
+    # Prefer the article that encloses the page's actual H1 before running
+    # broad body selectors. WordPress detail pages often return related-post
+    # cards as sibling articles, so selectors such as .entry-content can match
+    # several posts even though the current URL is a single detail page.
     body_selectors = (
         "[itemprop='articleBody']",
         ".entry-content",
@@ -278,36 +281,41 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
         ".td-post-content",
         ".single-post-content",
     )
+    h1 = soup.find("h1")
+    h1_article = h1.find_parent("article") if h1 else None
     scope = None
-    for selector in body_selectors:
-        matches = soup.select(selector)
-        if matches:
-            if len(matches) != 1:
-                return None
-            scope = matches[0]
-            break
 
-    if scope is None:
-        h1 = soup.find("h1")
-        h1_article = h1.find_parent("article") if h1 else None
-        articles = soup.find_all("article")
-        if h1_article is not None:
-            scope = h1_article
-        elif len(articles) == 1:
-            scope = articles[0]
-        elif len(articles) > 1:
-            return None
-        else:
-            # Some institutional WordPress themes do not use <article> or a
-            # recognized article-body class. Prefer the single semantic main
-            # region to avoid treating the site's header/navigation as event text.
-            main_regions = soup.find_all("main")
-            if len(main_regions) == 1:
-                scope = main_regions[0]
-            elif len(main_regions) > 1:
+    if h1_article is not None:
+        # Keep the headline and body together: event titles often carry the
+        # company name and drive mode, which may not be repeated in the body.
+        scope = h1_article
+    else:
+        # Without an article-scoped H1, selectors must be unique across the
+        # document. Multiple matches usually mean an archive/listing page.
+        for selector in body_selectors:
+            matches = soup.select(selector)
+            if matches:
+                if len(matches) != 1:
+                    return None
+                scope = matches[0]
+                break
+
+        if scope is None:
+            articles = soup.find_all("article")
+            if len(articles) == 1:
+                scope = articles[0]
+            elif len(articles) > 1:
                 return None
             else:
-                scope = soup.body or soup
+                # Some institutional themes do not use <article> or a
+                # recognized article-body class. Prefer one semantic main.
+                main_regions = soup.find_all("main")
+                if len(main_regions) == 1:
+                    scope = main_regions[0]
+                elif len(main_regions) > 1:
+                    return None
+                else:
+                    scope = soup.body or soup
 
     if _looks_like_event_listing(scope):
         return None
