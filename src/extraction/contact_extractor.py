@@ -14,12 +14,56 @@ from src.models.contact import (
 )
 from src.verification.contact_verifier import is_likely_phone
 
+def _company_search_name(company_name: str) -> str:
+    """Remove common legal suffixes while retaining the company/brand name."""
+    cleaned = re.sub(
+        r"\b(?:pvt|private|ltd|limited|llp|inc|incorporated|corp|corporation)\b\.?",
+        " ",
+        company_name,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip(" ,.-") or company_name.strip()
+
+
 def generate_queries(company_name: str) -> List[str]:
-    # Bounded queries per company
+    # Keep two bounded queries, but don't make the search engine parse a broad OR chain.
+    search_name = _company_search_name(company_name)
     return [
-        f'"{company_name}" HR OR "Talent Acquisition" OR "Campus Recruitment" contact phone',
-        f'"{company_name}" recruiter phone number'
+        f'"{search_name}" company contact official website',
+        f'"{search_name}" HR recruiter talent acquisition phone',
     ]
+
+
+def _search_result_matches_company(company_name: str, result: Dict[str, Any]) -> bool:
+    """Reject obvious cross-company search noise before spending a fetch slot."""
+    legal_suffixes = {
+        "pvt", "private", "ltd", "limited", "llp", "inc", "incorporated",
+        "corp", "corporation", "company", "co", "plc",
+    }
+    generic_markers = {
+        "the", "india", "global", "international", "services", "service",
+        "solutions", "solution", "technologies", "technology", "systems",
+        "system", "group", "industries", "industry", "enterprise", "enterprises",
+    }
+    company_tokens = [
+        token for token in re.findall(r"[a-z0-9]+", company_name.lower())
+        if token not in legal_suffixes
+    ]
+    haystack = " ".join(
+        str(result.get(field, "") or "")
+        for field in ("title", "body", "href")
+    ).lower()
+    haystack_compact = re.sub(r"[^a-z0-9]", "", haystack)
+    company_compact = "".join(company_tokens)
+
+    if company_compact and company_compact in haystack_compact:
+        return True
+
+    distinctive_tokens = [
+        token for token in company_tokens
+        if len(token) >= 5 and token not in generic_markers
+    ]
+    return any(token in haystack_compact for token in distinctive_tokens)
 
 def map_role_from_text(text: str) -> ContactRole:
     text_lower = text.lower()
@@ -65,6 +109,9 @@ class BoundedDiscoveryEngine:
     def __init__(self):
         self.telemetry = {
             "queries_generated": 0,
+            "search_results_returned": 0,
+            "irrelevant_results_filtered": 0,
+            "blocked_domain_results_filtered": 0,
             "urls_discovered": 0,
             "urls_attempted": 0,
             "successful_fetches": 0,
@@ -85,6 +132,9 @@ class BoundedDiscoveryEngine:
         if company_name not in self.per_company_telemetry:
             self.per_company_telemetry[company_name] = {
                 "queries_generated": 0,
+                "search_results_returned": 0,
+                "irrelevant_results_filtered": 0,
+                "blocked_domain_results_filtered": 0,
                 "urls_discovered": 0,
                 "urls_attempted": 0,
                 "successful_fetches": 0,
@@ -100,21 +150,51 @@ class BoundedDiscoveryEngine:
         
         urls_to_fetch = {}
         
+        company_stats = self.per_company_telemetry[company_name]
         try:
-            with DDGS() as ddgs:
+            # Live diagnostics showed this installed wrapper returns empty lists on
+            # default/HTML/Lite while the explicitly selected Bing backend returns results.
+            with DDGS(timeout=10) as ddgs:
                 for q in queries:
-                    # Bounded search: max 3 results per query
-                    results = list(ddgs.text(q, max_results=3))
+                    # Bounded search: max 3 results per query and 4 unique URLs per company.
+                    results = list(ddgs.text(q, backend="bing", max_results=3))
+                    self.telemetry["search_results_returned"] += len(results)
+                    company_stats["search_results_returned"] += len(results)
                     for r in results:
                         url = r.get("href")
-                        if url and url not in urls_to_fetch and len(urls_to_fetch) < 4: # max 4 URLs per company
+                        if not url:
+                            continue
+                        url_lower = url.lower()
+                        if "linkedin.com" in url_lower or "glassdoor.com" in url_lower:
+                            self.telemetry["blocked_domain_results_filtered"] += 1
+                            company_stats["blocked_domain_results_filtered"] += 1
+                            continue
+                        if not _search_result_matches_company(company_name, r):
+                            self.telemetry["irrelevant_results_filtered"] += 1
+                            company_stats["irrelevant_results_filtered"] += 1
+                            continue
+                        if url not in urls_to_fetch and len(urls_to_fetch) < 4:
                             self.telemetry["urls_discovered"] += 1
-                            self.per_company_telemetry[company_name]["urls_discovered"] += 1
+                            company_stats["urls_discovered"] += 1
                             urls_to_fetch[url] = {"snippet": r.get("body", ""), "query": q}
         except Exception as e:
             self.telemetry["exceptions"] += 1
-            self.per_company_telemetry[company_name]["stop_reason"] = "API_RATE_LIMIT"
+            message = str(e).lower()
+            stop_reason = (
+                "API_RATE_LIMIT"
+                if "rate" in message or "429" in message or "too many requests" in message
+                else "SEARCH_PROVIDER_ERROR"
+            )
+            company_stats["stop_reason"] = stop_reason
             print(f"Search exception for {company_name}: {e}")
+
+        if company_stats["stop_reason"] == "COMPLETED" and not urls_to_fetch:
+            if company_stats["search_results_returned"] == 0:
+                company_stats["stop_reason"] = "NO_SEARCH_RESULTS"
+            elif company_stats["irrelevant_results_filtered"] > 0:
+                company_stats["stop_reason"] = "NO_RELEVANT_RESULTS"
+            else:
+                company_stats["stop_reason"] = "NO_USABLE_RESULTS"
             
         for url, data in urls_to_fetch.items():
             snippet = data["snippet"]
@@ -217,9 +297,20 @@ class BoundedDiscoveryEngine:
             self.source_level_lineage.append(lineage_record)
             time.sleep(1) # rate limiting
             
-        # Update stop reason if we encountered network failures across the board
-        if self.per_company_telemetry[company_name]["urls_attempted"] > 0 and self.per_company_telemetry[company_name]["successful_fetches"] == 0 and self.per_company_telemetry[company_name]["failed_fetches"] > 0:
-            if self.per_company_telemetry[company_name]["stop_reason"] == "COMPLETED":
-                self.per_company_telemetry[company_name]["stop_reason"] = "NETWORK_FAILURE"
-                
+        # Update stop reason if we encountered network failures across the board.
+        if company_stats["urls_attempted"] > 0 and company_stats["successful_fetches"] == 0 and company_stats["failed_fetches"] > 0:
+            if company_stats["stop_reason"] == "COMPLETED":
+                company_stats["stop_reason"] = "NETWORK_FAILURE"
+
+        reasons = [stats.get("stop_reason", "COMPLETED") for stats in self.per_company_telemetry.values()]
+        non_completed = [reason for reason in reasons if reason != "COMPLETED"]
+        if not non_completed:
+            self.telemetry["stop_reason"] = "COMPLETED"
+        elif len(set(reasons)) == 1:
+            self.telemetry["stop_reason"] = reasons[0]
+        elif any(reason in {"API_RATE_LIMIT", "SEARCH_PROVIDER_ERROR", "NETWORK_FAILURE"} for reason in non_completed):
+            self.telemetry["stop_reason"] = "PARTIAL_FAILURE"
+        else:
+            self.telemetry["stop_reason"] = "PARTIAL_RESULTS"
+
         return candidates
