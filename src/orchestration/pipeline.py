@@ -120,10 +120,11 @@ class PipelineOrchestrator:
         from src.crawler.engine import CrawlerEngine
 
         engine = CrawlerEngine(state["sources"], max_pages=3, max_depth=1)
-        events, telemetry = await engine.run()
+        pages, telemetry = await engine.crawl_pages()
+        state["crawled_pages"] = pages
+        state["raw_candidates"] = []
         state["crawl_telemetry"] = telemetry.model_dump(mode="json")
         state["telemetry"]["crawl_telemetry"] = state["crawl_telemetry"]
-        state["raw_candidates"] = [event.model_dump(mode="json") for event in events]
 
         # Attempted sources are not necessarily successful sources.
         state["telemetry"]["sources_succeeded"] = telemetry.sources_succeeded
@@ -160,8 +161,34 @@ class PipelineOrchestrator:
         return state
 
     async def _do_extraction(self, state: PipelineRunState):
-        # Already handled by CrawlerEngine in existing implementation
-        state["telemetry"]["extraction_candidates"] = len(state["raw_candidates"])
+        from src.extraction.event_extractor import extract_candidates_from_pages
+
+        pages = state.get("crawled_pages", [])
+        if not isinstance(pages, list) or not pages:
+            raise RuntimeError(
+                "Extraction received no crawled pages; refusing to continue."
+            )
+
+        candidates = extract_candidates_from_pages(pages)
+        state["raw_candidates"] = [
+            candidate.model_dump(mode="json") for candidate in candidates
+        ]
+        by_source = {}
+        candidate_urls = set()
+        for candidate in candidates:
+            by_source[candidate.institution] = by_source.get(candidate.institution, 0) + 1
+            if candidate.event_url:
+                candidate_urls.add(candidate.event_url)
+
+        state["extraction_telemetry"] = {
+            "pages_examined": len(pages),
+            "candidates_found": len(candidates),
+            "candidates_by_source": by_source,
+            "pages_without_candidates": sum(
+                1 for page in pages if page["url"] not in candidate_urls
+            ),
+        }
+        state["telemetry"]["extraction_candidates"] = len(candidates)
         return state
 
     async def _do_normalization(self, state: PipelineRunState):
