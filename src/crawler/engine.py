@@ -3,7 +3,7 @@ import uuid
 from typing import Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, urljoin
+from urllib.parse import parse_qs, urlparse, urljoin
 
 from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
 from crawlee.router import Router
@@ -28,33 +28,106 @@ class CrawlerEngine:
         self.router = Router[BeautifulSoupCrawlingContext]()
         self.setup_router()
 
+    def _source_stats(self, institution: str) -> Dict[str, Any]:
+        return self.telemetry.source_stats.setdefault(
+            institution,
+            {
+                "pages_visited": 0,
+                "pages_succeeded": 0,
+                "pages_failed": 0,
+                "events_found": 0,
+                "browser_escalations": 0,
+                "stop_reason": None,
+            },
+        )
+
+    def _record_page_success(self, institution: str) -> None:
+        stats = self._source_stats(institution)
+        stats["pages_succeeded"] += 1
+        self.telemetry.pages_succeeded += 1
+        self.telemetry.requests_succeeded += 1
+
+    def _record_failed_request(self, url: str, institution: str, error: Exception) -> None:
+        stats = self._source_stats(institution)
+        message = str(error)
+        lowered = message.lower()
+        if "403" in lowered or "forbidden" in lowered or "session is blocked" in lowered:
+            reason = "BLOCKED_OR_FORBIDDEN"
+        elif "404" in lowered or "not found" in lowered:
+            reason = "HTTP_404"
+        else:
+            reason = "REQUEST_FAILED"
+
+        stats["pages_failed"] += 1
+        self.telemetry.pages_failed += 1
+        self.telemetry.requests_failed += 1
+        if stats["pages_succeeded"] == 0:
+            stats["stop_reason"] = reason
+        elif stats.get("stop_reason") is None:
+            stats["stop_reason"] = "PARTIAL_REQUEST_FAILURES"
+
+        self.telemetry.exceptions.append(
+            {
+                "url": url,
+                "institution": institution,
+                "stop_reason": reason,
+                "error": message,
+            }
+        )
+
     def _select_child_urls(
         self,
-        hrefs: List[str],
+        links: List[Any],
         page_url: str,
-        page_text: str,
         seed_url: str,
         scheduled_urls: set,
         remaining_slots: int,
     ) -> List[str]:
-        """Select relevant same-host child URLs in document order within budget."""
+        """Select relevant same-host links without enqueueing auth/logout endpoints."""
         if remaining_slots <= 0:
             return []
 
         base_domain = urlparse(seed_url).netloc
-        keywords = ('notice', 'drive', 'hiring', 'career', 'event', 'page', 'archive', 'circular')
+        keywords = ("notice", "drive", "hiring", "career", "event", "page", "archive", "circular")
+        blocked_segments = {"login", "logout", "log-in", "log-out", "signin", "sign-in", "admin"}
         selected = []
-        for href in hrefs:
+
+        for link in links:
+            if isinstance(link, tuple):
+                href, anchor_text = link
+            else:
+                href, anchor_text = link, ""
+
             full_url = normalize_url(urljoin(page_url, href))
-            if urlparse(full_url).netloc != base_domain or full_url in scheduled_urls:
+            parsed = urlparse(full_url)
+            if parsed.netloc != base_domain or full_url in scheduled_urls:
                 continue
-            if not any(keyword in (href + " " + page_text).lower() for keyword in keywords):
+
+            path_segments = [segment.lower() for segment in parsed.path.split("/") if segment]
+            if any(
+                segment in blocked_segments
+                or segment.startswith("wp-login")
+                or segment.startswith("wp-admin")
+                for segment in path_segments
+            ):
+                continue
+            query = parse_qs(parsed.query)
+            if any(
+                key.lower() == "action"
+                and any(value.lower() in {"logout", "log_out", "signout"} for value in values)
+                for key, values in query.items()
+            ):
+                continue
+
+            searchable = f"{href} {anchor_text}".lower()
+            if not any(keyword in searchable for keyword in keywords):
                 continue
 
             scheduled_urls.add(full_url)
             selected.append(full_url)
             if len(selected) >= remaining_slots:
                 break
+
         return selected
 
     def setup_router(self):
@@ -64,29 +137,22 @@ class CrawlerEngine:
             depth = context.request.user_data.get('depth', 0)
             seed_url = context.request.user_data.get('seed_url', url)
             inst = context.request.user_data.get('institution', 'UNKNOWN')
+            request_data = context.request.user_data
+            request_data["_crawler_handler_entered"] = True
+            stats = self._source_stats(inst)
+
+            if not request_data.get("_crawl_attempt_recorded", False):
+                stats["pages_visited"] += 1
+                self.telemetry.pages_attempted += 1
+                self.telemetry.requests_attempted += 1
+                request_data["_crawl_attempt_recorded"] = True
+            self.telemetry.http_requests += 1
 
             source_max_pages = context.request.user_data.get('max_pages', 15)
             source_max_depth = context.request.user_data.get('max_depth', 2)
-
-            stats = self.telemetry.source_stats.setdefault(
-                inst,
-                {
-                    'pages_visited': 0,
-                    'pages_succeeded': 0,
-                    'pages_failed': 0,
-                    'events_found': 0,
-                    'browser_escalations': 0,
-                    'stop_reason': None,
-                },
-            )
             if stats['pages_visited'] >= source_max_pages:
                 stats['stop_reason'] = "BUDGET_EXHAUSTED"
                 return
-
-            stats['pages_visited'] += 1
-            self.telemetry.pages_attempted += 1
-            self.telemetry.requests_attempted += 1
-            self.telemetry.http_requests += 1
 
             response = getattr(context, 'http_response', None)
             status_code = getattr(response, 'status_code', None)
@@ -112,8 +178,7 @@ class CrawlerEngine:
                 stats['stop_reason'] = "AUTHENTICATION_REQUIRED"
                 return
 
-            self.telemetry.pages_succeeded += 1
-            self.telemetry.requests_succeeded += 1
+            self._record_page_success(inst)
             html = str(context.soup)
             text = context.soup.get_text(separator="\n", strip=True)
 
@@ -152,10 +217,12 @@ class CrawlerEngine:
             if depth < source_max_depth:
                 scheduled_urls = self._scheduled_urls_by_source.setdefault(inst, set())
                 remaining_slots = source_max_pages - len(scheduled_urls)
-                links = [a['href'] for a in context.soup.find_all('a', href=True)]
+                links = [
+                    (anchor['href'], anchor.get_text(" ", strip=True))
+                    for anchor in context.soup.find_all('a', href=True)
+                ]
                 urls_to_enqueue = self._select_child_urls(
-                    links, url, context.soup.get_text(), seed_url,
-                    scheduled_urls, remaining_slots
+                    links, url, seed_url, scheduled_urls, remaining_slots
                 )
                 if urls_to_enqueue:
                     requests = [
@@ -210,6 +277,45 @@ class CrawlerEngine:
             request_handler_timeout=timedelta(seconds=20)
         )
 
+        @crawler.error_handler
+        async def record_retry(context, error):
+            request_data = context.request.user_data
+            self.telemetry.retries += 1
+
+            # An error before the page handler means the HTTP attempt did not
+            # reach the handler and must be counted here. Handler errors have
+            # already counted that attempt at handler entry.
+            if not request_data.get("_crawler_handler_entered", False):
+                self.telemetry.http_requests += 1
+                if not request_data.get("_crawl_attempt_recorded", False):
+                    institution = request_data.get("institution", "UNKNOWN")
+                    self._source_stats(institution)["pages_visited"] += 1
+                    self.telemetry.pages_attempted += 1
+                    self.telemetry.requests_attempted += 1
+                    request_data["_crawl_attempt_recorded"] = True
+
+            # The next attempt may fail before the normal handler is reached.
+            request_data["_crawler_handler_entered"] = False
+            return None
+
+        @crawler.failed_request_handler
+        async def record_terminal_failure(context, error):
+            request_data = context.request.user_data
+            institution = request_data.get("institution", "UNKNOWN")
+
+            # Count the final failed HTTP attempt; retry callbacks count earlier
+            # attempts but the terminal attempt does not get another retry callback.
+            if not request_data.get("_crawler_handler_entered", False):
+                self.telemetry.http_requests += 1
+                if not request_data.get("_crawl_attempt_recorded", False):
+                    self._source_stats(institution)["pages_visited"] += 1
+                    self.telemetry.pages_attempted += 1
+                    self.telemetry.requests_attempted += 1
+                    request_data["_crawl_attempt_recorded"] = True
+
+            self._record_failed_request(context.request.url, institution, error)
+            request_data["_crawler_handler_entered"] = False
+
         requests = []
         supported_categories = {
             "P0_DIRECT_EVENT_FEED",
@@ -224,17 +330,7 @@ class CrawlerEngine:
             self.telemetry.sources_attempted += 1
             institution = source["institution"]
             seed_url = normalize_url(source["seed_url"])
-            stats = self.telemetry.source_stats.setdefault(
-                institution,
-                {
-                    'pages_visited': 0,
-                    'pages_succeeded': 0,
-                    'pages_failed': 0,
-                    'events_found': 0,
-                    'browser_escalations': 0,
-                    'stop_reason': None,
-                },
-            )
+            stats = self._source_stats(institution)
             limits = source.get('crawl_limits', {})
             max_pages = limits.get('max_pages', self.global_max_pages)
             max_depth = limits.get('max_depth', self.global_max_depth)
