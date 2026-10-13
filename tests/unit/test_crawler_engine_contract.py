@@ -86,7 +86,7 @@ async def test_pipeline_crawling_propagates_measured_source_outcomes(monkeypatch
         def __init__(self, *args, **kwargs):
             pass
 
-        async def run(self):
+        async def crawl_pages(self):
             return [], telemetry
 
     monkeypatch.setattr("src.crawler.engine.CrawlerEngine", FakeCrawlerEngine)
@@ -135,7 +135,7 @@ async def test_pipeline_crawling_fails_closed_when_every_source_fails(monkeypatc
         def __init__(self, *args, **kwargs):
             pass
 
-        async def run(self):
+        async def crawl_pages(self):
             return [], telemetry
 
     monkeypatch.setattr("src.crawler.engine.CrawlerEngine", FakeCrawlerEngine)
