@@ -134,17 +134,21 @@ async def test_evidence_stage_warns_for_events_without_field_evidence(
     assert json.loads(Path("artifacts/event_evidence.json").read_text()) == result["evidence"]
 
 
+@pytest.mark.parametrize(
+    "malformed_evidence",
+    [{}, {"company": "not-a-list"}, [{}]],
+)
 @pytest.mark.asyncio
 async def test_evidence_stage_fails_closed_on_malformed_evidence_shape(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, malformed_evidence
 ):
     monkeypatch.chdir(tmp_path)
     state = create_initial_state()
     event = _event()
-    event["evidence"] = {"company": "not-a-list"}
+    event["evidence"] = malformed_evidence
     state["normalized_events"] = [event]
 
-    with pytest.raises(RuntimeError, match="must be a list"):
+    with pytest.raises(RuntimeError):
         await PipelineOrchestrator()._do_evidence(state)
 
     assert state["evidence"] == []
