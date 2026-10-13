@@ -243,7 +243,148 @@ class PipelineOrchestrator:
         return state
 
     async def _do_evidence(self, state: PipelineRunState):
-        # Evidence is inherently populated in previous stages
+        """Build a deduplicated, auditable registry of field-level event evidence."""
+        import hashlib
+        import json
+        from pathlib import Path
+
+        normalized_events = state.get("normalized_events", [])
+        if normalized_events is None:
+            normalized_events = []
+        if not isinstance(normalized_events, list):
+            raise RuntimeError("Evidence stage expected normalized_events to be a list.")
+
+        evidence_records = []
+        seen_evidence = set()
+        events_without_evidence = []
+
+        for event_index, event in enumerate(normalized_events):
+            if hasattr(event, "model_dump"):
+                event = event.model_dump()
+            elif hasattr(event, "dict") and not isinstance(event, dict):
+                event = event.dict()
+
+            if not isinstance(event, dict):
+                raise RuntimeError(
+                    f"Evidence stage event at index {event_index} must be an object."
+                )
+
+            event_id = event.get("event_id")
+            if not isinstance(event_id, str) or not event_id.strip():
+                raise RuntimeError(
+                    f"Evidence stage event at index {event_index} has no event_id."
+                )
+
+            event_evidence = event.get("evidence", [])
+            if event_evidence is None:
+                event_evidence = []
+            if not isinstance(event_evidence, list):
+                raise RuntimeError(
+                    f"Evidence for event {event_id} must be a list."
+                )
+
+            valid_evidence_count = 0
+            for evidence_index, item in enumerate(event_evidence):
+                if not isinstance(item, dict):
+                    raise RuntimeError(
+                        f"Evidence item {evidence_index} for event {event_id} "
+                        "must be an object."
+                    )
+
+                # Support normalized field evidence and the existing legacy
+                # CTC-conflict evidence shape without dropping either.
+                field = item.get("field") or item.get("type")
+                if not isinstance(field, str) or not field.strip():
+                    raise RuntimeError(
+                        f"Evidence item {evidence_index} for event {event_id} "
+                        "has no field/type identifier."
+                    )
+                if "raw_value" in item:
+                    raw_value = item.get("raw_value")
+                elif "raw" in item:
+                    raw_value = item.get("raw")
+                else:
+                    raw_value = item.get("value")
+
+                evidence_url = (
+                    item.get("evidence_url")
+                    or item.get("url")
+                    or event.get("event_url")
+                    or event.get("source_seed_url")
+                )
+                evidence_text = (
+                    item.get("evidence_text")
+                    or item.get("text")
+                    or item.get("evidence_excerpt")
+                )
+                extraction_method = (
+                    item.get("extraction_method") or item.get("method")
+                )
+
+                record = {
+                    "event_id": event_id,
+                    "source_event_id": event.get("source_event_id"),
+                    "canonical_identity": event.get("canonical_identity"),
+                    "institution": event.get("institution"),
+                    "company_name": event.get("company_name"),
+                    "field": str(field),
+                    "raw_value": raw_value,
+                    "evidence_url": evidence_url,
+                    "evidence_text": evidence_text,
+                    "extraction_method": extraction_method,
+                    "confidence": item.get("confidence"),
+                }
+                valid_evidence_count += 1
+
+                # Deduplicate exact records only; distinct evidence excerpts,
+                # source URLs, or values remain separately auditable.
+                fingerprint = hashlib.sha256(
+                    json.dumps(
+                        record,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        default=str,
+                    ).encode("utf-8")
+                ).hexdigest()
+                if fingerprint in seen_evidence:
+                    continue
+                seen_evidence.add(fingerprint)
+                record["evidence_id"] = fingerprint[:24]
+                evidence_records.append(record)
+
+            if valid_evidence_count == 0:
+                events_without_evidence.append(event_id)
+
+        # Re-running this stage should replace its own warnings rather than
+        # multiplying them.
+        warning_prefix = "Stage 6 Evidence: "
+        state["warnings"] = [
+            warning for warning in state.get("warnings", [])
+            if not (
+                isinstance(warning, str)
+                and warning.startswith(warning_prefix)
+            )
+        ]
+        for event_id in events_without_evidence:
+            state["warnings"].append(
+                f"{warning_prefix}event {event_id} has no field-level evidence."
+            )
+
+        output_path = Path("artifacts/event_evidence.json")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = output_path.with_name(output_path.name + ".tmp")
+        temporary_path.write_text(
+            json.dumps(evidence_records, indent=2, ensure_ascii=False, default=str)
+            + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(output_path)
+
+        state["evidence"] = evidence_records
+        state["telemetry"]["evidence_records"] = len(evidence_records)
+        state["telemetry"]["evidence_events_without_records"] = len(
+            events_without_evidence
+        )
         return state
 
     async def _do_contact_intelligence(self, state: PipelineRunState):
