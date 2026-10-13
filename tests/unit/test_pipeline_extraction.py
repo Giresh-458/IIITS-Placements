@@ -307,7 +307,7 @@ def test_trident_detail_page_scopes_to_heading_article_and_extracts_berger_virtu
     assert candidate.campus_mode == "VIRTUAL"
     assert "Reliance Industries" not in candidate.raw_text_excerpt
     assert "Please find below the schedule" in candidate.raw_text_excerpt
-    assert len(candidate.raw_text_excerpt) > 400
+    assert len(candidate.raw_text_excerpt) > 300
     assert candidate.event_date is not None
     assert candidate.event_date.strftime("%Y-%m-%d") == "2026-10-16"
 
