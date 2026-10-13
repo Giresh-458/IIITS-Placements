@@ -191,6 +191,14 @@ def test_l_query_generation():
     assert len(queries) == 2
     assert "TestCompany" in queries[0]
 
+
+def test_l2_query_generation_removes_legal_suffix():
+    from src.extraction.contact_extractor import generate_queries
+    queries = generate_queries("Transenergy Pvt. Ltd.")
+    assert len(queries) == 2
+    assert '"Transenergy"' in queries[0]
+    assert "Pvt." not in queries[0]
+
 def test_m_extract_phones():
     from src.extraction.contact_extractor import extract_phones_from_text
     # Should catch typical 10-digit formats with prefixes
@@ -219,15 +227,45 @@ def test_p_genuine_zero_result():
     from src.extraction.contact_extractor import BoundedDiscoveryEngine
     from unittest.mock import patch
     engine = BoundedDiscoveryEngine()
-    
+
     with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs:
-        # Mock DDGS to return empty list
+        # Mock DDGS to return an empty list for both bounded queries.
         mock_ddgs.return_value.__enter__.return_value.text.return_value = []
         candidates = engine.attempt_live_discovery("TestCorp", "test_id")
-        
+
         assert len(candidates) == 0
-        assert engine.per_company_telemetry["TestCorp"]["stop_reason"] == "COMPLETED"
+        assert engine.per_company_telemetry["TestCorp"]["stop_reason"] == "NO_SEARCH_RESULTS"
         assert engine.per_company_telemetry["TestCorp"]["urls_discovered"] == 0
+        assert engine.telemetry["stop_reason"] == "NO_SEARCH_RESULTS"
+        assert engine.telemetry["search_results_returned"] == 0
+
+def test_p2_explicit_bing_backend_filters_unrelated_results():
+    from src.extraction.contact_extractor import BoundedDiscoveryEngine
+    from unittest.mock import patch
+
+    engine = BoundedDiscoveryEngine()
+    unrelated = [{
+        "href": "https://www.youtube.com/",
+        "title": "YouTube",
+        "body": "YouTube videos and channels",
+    }]
+
+    with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs, \
+         patch("httpx.Client.get") as mock_get:
+        mock_ddgs.return_value.__enter__.return_value.text.return_value = unrelated
+        candidates = engine.attempt_live_discovery("Transenergy Pvt. Ltd.", "evt-1")
+
+    assert candidates == []
+    assert mock_ddgs.return_value.__enter__.return_value.text.call_count == 2
+    assert all(
+        call.kwargs.get("backend") == "bing"
+        for call in mock_ddgs.return_value.__enter__.return_value.text.call_args_list
+    )
+    assert mock_get.call_count == 0
+    assert engine.per_company_telemetry["Transenergy Pvt. Ltd."]["urls_discovered"] == 0
+    assert engine.per_company_telemetry["Transenergy Pvt. Ltd."]["stop_reason"] == "NO_RELEVANT_RESULTS"
+    assert engine.telemetry["irrelevant_results_filtered"] == 2
+
 
 def test_q_api_rate_limit():
     from src.extraction.contact_extractor import BoundedDiscoveryEngine
@@ -247,12 +285,16 @@ def test_r_network_failure():
     from src.extraction.contact_extractor import BoundedDiscoveryEngine
     from unittest.mock import patch
     engine = BoundedDiscoveryEngine()
-    
+
     with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs, \
          patch("httpx.Client.get") as mock_get:
-        
+
         mock_ddgs.return_value.__enter__.return_value.text.return_value = [
-            {"href": "http://test.com/1", "body": "test"}
+            {
+                "href": "http://test.com/1",
+                "title": "NetFailCorp recruitment contact",
+                "body": "NetFailCorp recruitment contact",
+            }
         ]
         
         mock_get.side_effect = Exception("Connection Timeout")
@@ -275,7 +317,11 @@ def test_s_successful_fetch_rejected_candidate():
          patch("httpx.Client.get") as mock_get:
         
         mock_ddgs.return_value.__enter__.return_value.text.return_value = [
-            {"href": "http://test.com/support", "body": "Customer Support"}
+            {
+                "href": "http://test.com/support",
+                "title": "TestCorp Support",
+                "body": "Customer Support",
+            }
         ]
         
         mock_resp = MagicMock()
@@ -296,7 +342,8 @@ def test_s_successful_fetch_rejected_candidate():
 def test_t_company_identity_required():
     from src.models.contact import PhoneVerificationState
     assert hasattr(PhoneVerificationState, 'COMPANY_IDENTITY_REQUIRED')
-    
+
+
 def test_u_production_routing_logic():
     import run_batch_7
     from src.models.contact import PhoneVerificationState
@@ -305,3 +352,16 @@ def test_u_production_routing_logic():
     assert status == PhoneVerificationState.COMPANY_IDENTITY_REQUIRED.value
     assert status != PhoneVerificationState.NO_VERIFIED_PUBLIC_RECRUITMENT_PHONE.value
     assert "identity missing" in reason.lower()
+
+
+def test_v_empty_company_search_is_marked_incomplete():
+    import run_batch_7
+    from src.models.contact import PhoneVerificationState
+
+    ev = {"event_id": "evt_1", "company_name": "Transenergy Pvt. Ltd."}
+    status, reason = run_batch_7.determine_terminal_state(
+        ev, set(), {"Transenergy Pvt. Ltd.": "NO_SEARCH_RESULTS"}
+    )
+
+    assert status == PhoneVerificationState.CONTACT_DISCOVERY_INCOMPLETE.value
+    assert "NO_SEARCH_RESULTS" in reason
