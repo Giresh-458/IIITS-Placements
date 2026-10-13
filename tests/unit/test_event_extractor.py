@@ -1,5 +1,5 @@
 import pytest
-from src.extraction.event_extractor import extract_event_candidate, extract_from_text
+from src.extraction.event_extractor import extract_from_text
 
 def test_company_article_heading():
     res = extract_from_text("Campus Recruitment Drive by Emicon Advisory Services LLP for B.Tech", "http://x")
