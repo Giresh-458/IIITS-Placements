@@ -1,6 +1,43 @@
 import re
 from typing import Dict, Any
 
+
+def _normalize_company_candidate(value: str) -> str:
+    """Collapse layout whitespace before storing a company name."""
+    return re.sub(r"\s+", " ", value or "").strip(" \t\r\n:;,-–—")
+
+
+def _is_plausible_company_candidate(value: str) -> bool:
+    """Reject obvious social-navigation bundles and fragments of sentence text."""
+    candidate = _normalize_company_candidate(value)
+    if not candidate:
+        return False
+
+    tokens = re.findall(r"[a-z0-9]+", candidate.lower())
+    if not tokens or len(tokens) > 7:
+        return False
+
+    social_labels = {"linkedin", "instagram", "whatsapp", "youtube", "facebook", "twitter"}
+    if sum(token in social_labels for token in tokens) >= 2:
+        return False
+
+    if re.search(
+        r"\b(?:will be conducting|is conducting|are conducting|will conduct|"
+        r"conducting a|conducting the|will be held|is being held)\b",
+        candidate,
+        re.IGNORECASE,
+    ):
+        return False
+
+    invalid_edges = {
+        "limited", "private", "will", "would", "be", "being", "conducting",
+        "a", "an", "the", "and", "or", "by", "for", "of", "with", "on", "to", "in", "at",
+    }
+    if tokens[0] in invalid_edges or tokens[-1] in invalid_edges:
+        return False
+
+    return True
+
 def extract_from_text(text: str, url: str) -> Dict[str, Any]:
     extracted = {
         "company_candidate": None,
@@ -22,6 +59,31 @@ def extract_from_text(text: str, url: str) -> Dict[str, Any]:
     if not text:
         return extracted
         
+    # Prefer a bounded company span before generic sentence text, e.g.
+    # "ITC Limited will be conducting a Campus Recruitment Drive".
+    name_token = r"[A-Z][A-Za-z0-9&.,'()/+\-]*"
+    suffix_token = (
+        r"(?i:pvt\.?|private|ltd\.?|limited|llp|inc\.?|corp\.?|"
+        r"corporation|industries|solutions|services|technologies|group)"
+    )
+    conducting_pattern = (
+        r"\\b("
+        + name_token
+        + r"(?:[ \\t]+(?:" + name_token + r"|" + suffix_token + r")){0,5}"
+        + r")[ \\t]+(?i:will be conducting|is conducting|are conducting|will conduct)"
+        + r"[ \\t]+(?:(?i:a|the)[ \\t]+)?"
+        + r"(?i:campus[ \\t]+)?(?i:recruitment|placement|hiring)[ \\t]+drive\\b"
+    )
+    conducting_match = re.search(conducting_pattern, text)
+    if conducting_match:
+        candidate = _normalize_company_candidate(conducting_match.group(1))
+        if _is_plausible_company_candidate(candidate):
+            extracted["company_candidate"] = candidate
+            extracted["evidence"]["company"] = {
+                "text": _normalize_company_candidate(conducting_match.group(0)),
+                "method": "sentence_context_regex",
+            }
+
     # Company extraction
     company_patterns = [
         r"^\s*([A-Z][A-Za-z0-9&.,'() ]{1,60}?)\s*[–—-]\s*(?:GD Schedule\b|Group Discussion\b|Interview Schedule\b|Virtual Campus Drive\b|Campus Drive\b|Recruitment Drive\b)",
@@ -29,21 +91,28 @@ def extract_from_text(text: str, url: str) -> Dict[str, Any]:
         r'\b([A-Z][a-zA-Z0-9\s&(),\.\-]+?(?:LLP|Private Limited|Pvt\.? Ltd\.?|Ltd\.?|Inc\.?|Limited|Solutions|Technologies|Software|Group|Services|Enterprises|LLC|Corporation)?)\s*(?:\ufffd|\-|–)?\s*hiring for',
         r'(?:Campus Recruitment Drive|Physical Campus Drive|On-Campus Recruitment Drive|On campus drive|Placement Drive|Campus Drive)\s*(?:by|with|of)\s*([A-Z][a-zA-Z0-9\s&()]+?(?:LLP|Private Limited|Pvt\.? Ltd\.?|Ltd\.?|Inc\.?|Limited|Solutions|Technologies|Software|Group|Services|Enterprises|LLC|Corporation)?)(?=[\s\n\.,]+(?:for|GIET|Trident|Register|Read|Dear|on|at|with|Drive|Chennai|scheduled)|\n|\.|$)',
         r'shortlist for the ([a-zA-Z0-9\s\.\&\,\-]+?) Recruitment Drive',
-        r'(?:for the|at the)?\s*\b((?!Campus\b)[A-Z][a-zA-Z0-9\.\&\,\-]+(?:\s+[a-zA-Z0-9\.\&\,\-]+){0,4}?(?:\s+(?:Private Limited|Pvt\.? Ltd\.?|LLP|Inc\.?|Corp\.?|Services|Technologies|Technology))?)\s+(?:Campus )?Recruitment Drive',
+        # Horizontal whitespace prevents social links on separate lines from
+        # being joined into a fake company name.
+        r'(?:for the|at the)?[ \t]*\b((?!Campus\b)[A-Z][a-zA-Z0-9\.\&\,\-]+(?:[ \t]+[a-zA-Z0-9\.\&\,\-]+){0,4}?(?:[ \t]+(?:Private Limited|Pvt\.? Ltd\.?|LLP|Inc\.?|Corp\.?|Services|Technologies|Technology))?)[ \t]+(?:Campus[ \t]+)?Recruitment Drive',
     ]
     
-    for pat in company_patterns:
-        match = re.search(pat, text, re.IGNORECASE)
-        if match:
-            candidate = match.group(1).strip()
-            if len(candidate) > 2 and candidate.lower() not in ["profile", "name", "company", "date", "role", "branch", "details", "click here"]:
-                extracted["company_candidate"] = candidate
-                extracted["evidence"]["company"] = {
-                    "text": match.group(0),
-                    "method": "structural_regex"
-                }
-                break
-                
+    if not extracted["company_candidate"]:
+        for pat in company_patterns:
+            match = re.search(pat, text, re.IGNORECASE)
+            if not match:
+                continue
+            candidate = _normalize_company_candidate(match.group(1))
+            if len(candidate) <= 2 or not _is_plausible_company_candidate(candidate):
+                continue
+            if candidate.lower() in ["profile", "name", "company", "date", "role", "branch", "details", "click here"]:
+                continue
+            extracted["company_candidate"] = candidate
+            extracted["evidence"]["company"] = {
+                "text": _normalize_company_candidate(match.group(0)),
+                "method": "structural_regex"
+            }
+            break
+
     # Role extraction
     role_patterns = [
         r'(?:Job Title|Job Role|Position|Role|Designation|Roles Offered|Job Profile|Profile Offered)\s*(?:\||:)\s*([A-Z][a-zA-Z0-9\s\-\u2013\u2014\ufffd&/]+(?:Engineer|Developer|Consultant|Analyst|Trainee|Manager|Executive|Specialist)?)',
