@@ -181,22 +181,28 @@ async def test_terminal_crawl_failure_callback_records_403_and_attempt_counts(mo
             return callback
 
         async def run(self, requests):
+            from types import SimpleNamespace
+
             request = requests[0]
             captured["request"] = request
-            context = type(
-                "FakeContext",
-                (),
-                {"request": request},
-            )()
-            await self.error_callback(
-                context, RuntimeError("Assuming the session is blocked based on HTTP status code 403")
+
+            def context_for(retry_count):
+                # Simulate Crawlee's copied request context for each retry.
+                attempt_request = SimpleNamespace(
+                    url=request.url,
+                    user_data=dict(request.user_data),
+                    id=request.id,
+                    unique_key=request.unique_key,
+                    retry_count=retry_count,
+                )
+                return SimpleNamespace(request=attempt_request)
+
+            error = RuntimeError(
+                "Assuming the session is blocked based on HTTP status code 403"
             )
-            await self.error_callback(
-                context, RuntimeError("Assuming the session is blocked based on HTTP status code 403")
-            )
-            await self.failed_callback(
-                context, RuntimeError("Assuming the session is blocked based on HTTP status code 403")
-            )
+            await self.error_callback(context_for(0), error)
+            await self.error_callback(context_for(1), error)
+            await self.failed_callback(context_for(2), error)
 
     monkeypatch.setattr("src.crawler.engine.BeautifulSoupCrawler", FakeCrawler)
     engine = CrawlerEngine(seeds=[{
