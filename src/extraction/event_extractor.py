@@ -235,3 +235,61 @@ def extract_event_candidate(html: str, text: str, url: str, metadata: dict = Non
         evidence=extracted.get("evidence", {}),
         raw_text_excerpt=text[:1000]
     )
+
+
+
+def extract_candidates_from_pages(pages):
+    """Extract hiring-event candidates from raw page captures produced by Crawling."""
+    from datetime import datetime
+    from src.extraction.date_normalizer import extract_dates, is_event_recent
+
+    candidates = []
+    for index, page in enumerate(pages):
+        if not isinstance(page, dict):
+            raise ValueError(f"Crawled page record {index} must be an object.")
+
+        url = page.get("url")
+        html = page.get("html", "")
+        text = page.get("text", "")
+        institution = page.get("institution")
+        seed_url = page.get("seed_url", "")
+
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError(f"Crawled page record {index} requires a URL.")
+        if not isinstance(html, str) or not isinstance(text, str):
+            raise ValueError(
+                f"Crawled page record {index} HTML and text must be strings."
+            )
+        if not isinstance(institution, str) or not institution.strip():
+            raise ValueError(
+                f"Crawled page record {index} requires an institution."
+            )
+
+        candidate = extract_event_candidate(
+            html,
+            text,
+            url,
+            {"institution": institution, "seed_url": seed_url},
+        )
+        if not candidate:
+            continue
+
+        event_date, event_raw, event_conf, reg_date, reg_raw, reg_conf = extract_dates(
+            text, html
+        )
+        candidate.event_date = event_date
+        candidate.event_date_raw = event_raw
+        candidate.event_date_confidence = event_conf
+        candidate.registration_deadline = reg_date
+        candidate.registration_deadline_raw = reg_raw
+
+        if event_date:
+            candidate.is_recent = is_event_recent(
+                event_date, datetime(2026, 9, 20), datetime(2026, 10, 4)
+            )
+            if candidate.is_recent:
+                candidate.event_status = "COMPLETED_15D"
+
+        candidates.append(candidate)
+
+    return candidates

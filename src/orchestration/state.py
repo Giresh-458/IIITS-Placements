@@ -43,6 +43,8 @@ class PipelineRunState(TypedDict):
     sources_override_provided: bool
     failed_sources: List[Dict[str, Any]]
     crawl_telemetry: Dict[str, Any]
+    crawled_pages: List[Dict[str, Any]]
+    extraction_telemetry: Dict[str, Any]
     
     # Extraction & Normalization
     raw_candidates: List[Dict[str, Any]]
@@ -90,6 +92,8 @@ def create_initial_state(run_id: str = None, sources: List[Dict[str, Any]] = Non
         "sources_override_provided": sources is not None,
         "failed_sources": [],
         "crawl_telemetry": {},
+        "crawled_pages": [],
+        "extraction_telemetry": {},
         "raw_candidates": [],
         "normalized_events": [],
         "qualified_events": [],

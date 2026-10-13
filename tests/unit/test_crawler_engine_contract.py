@@ -82,18 +82,30 @@ async def test_pipeline_crawling_propagates_measured_source_outcomes(monkeypatch
         },
     )
 
+    page = {
+        "url": "https://example.edu/event",
+        "seed_url": "https://example.edu/placements",
+        "institution": "College A",
+        "html": "<html><body>raw page</body></html>",
+        "text": "raw page",
+        "depth": 0,
+        "http_status": 200,
+    }
+
     class FakeCrawlerEngine:
         def __init__(self, *args, **kwargs):
             pass
 
-        async def run(self):
-            return [], telemetry
+        async def crawl_pages(self):
+            return [page], telemetry
 
     monkeypatch.setattr("src.crawler.engine.CrawlerEngine", FakeCrawlerEngine)
     state = create_initial_state(sources=[{}, {}])
 
     await PipelineOrchestrator()._do_crawling(state)
 
+    assert state["crawled_pages"] == [page]
+    assert state["raw_candidates"] == []
     assert state["telemetry"]["sources_succeeded"] == 1
     assert state["telemetry"]["sources_failed"] == 1
     assert state["failed_sources"] == [
@@ -135,7 +147,7 @@ async def test_pipeline_crawling_fails_closed_when_every_source_fails(monkeypatc
         def __init__(self, *args, **kwargs):
             pass
 
-        async def run(self):
+        async def crawl_pages(self):
             return [], telemetry
 
     monkeypatch.setattr("src.crawler.engine.CrawlerEngine", FakeCrawlerEngine)
