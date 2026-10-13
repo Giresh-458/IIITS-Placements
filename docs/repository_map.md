@@ -22,8 +22,8 @@ This document records the execution paths visible in the current source tree. It
 | 2 | Crawling | Calls `CrawlerEngine.crawl_pages()` with bounded source limits and stores raw HTML/text page captures plus crawl telemetry; extraction is not performed in this stage. |
 | 3 | Extraction | Calls `extract_candidates_from_pages()` over captured pages, scopes content to a primary article/body when identifiable, rejects likely multi-notice archives, and records extraction telemetry. |
 | 4 | Normalization | Calls `normalize_candidates()` and writes `artifacts/normalized_hiring_events.json`. |
-| 5 | Qualification | Calls `apply_business_filters()`, writes `artifacts/classified_events.json`, and uses a fixed `as_of` date in the current code. |
-| 6 | Evidence | Currently a no-op method. |
+| 5 | Qualification | Calls `apply_business_filters()`, uses the machine-local current date for date-based rules, and writes `artifacts/classified_events.json`. |
+| 6 | Evidence | Builds a deduplicated field-level evidence registry from normalized event evidence, records missing-evidence warnings and telemetry, and atomically writes `artifacts/event_evidence.json`; it does not copy full raw page text. |
 | 7 | Contact Intelligence | Invokes `run_batch_7.py` as a subprocess and loads `normalized_contacts.json`. |
 | 8 | Consolidation | Invokes `run_batch_8.py`, rejects failed or missing outputs, and loads validated outreach artifacts. |
 | 9 | Persistence | Calls `Batch9Ingestion` directly with outreach lead/contact artifacts. |
