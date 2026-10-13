@@ -41,3 +41,35 @@ async def test_dynamic_js_failure(fixture_server):
     assert html == ""
     assert text == ""
     assert engine.telemetry.browser_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_playwright_launch_failure_preserves_static_page_fallback(monkeypatch):
+    engine = CrawlerEngine(seeds=[])
+    static_html = "<html><body><p>Hiring event listed in static HTML</p></body></html>"
+    static_text = "Hiring event listed in static HTML"
+
+    class FakeChromium:
+        async def launch(self):
+            raise RuntimeError("simulated browser launch failure")
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("src.crawler.engine.async_playwright", lambda: FakePlaywright())
+
+    html, text = await engine.fetch_with_playwright(
+        "https://example.edu/placements",
+        fallback_html=static_html,
+        fallback_text=static_text,
+    )
+
+    assert html == static_html
+    assert text == static_text
+    assert engine.telemetry.browser_failures == 1
