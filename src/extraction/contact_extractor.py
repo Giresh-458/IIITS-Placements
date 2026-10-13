@@ -326,8 +326,6 @@ class BoundedDiscoveryEngine:
                         
                     text_content = soup.get_text(separator=' ', strip=True)
                     
-                    # Combine snippet and page text for evidence
-                    full_evidence = snippet + " | " + text_content[:500] 
                     phone_occurrences = extract_phone_occurrences(text_content)
                     phone_context_source = "fetched page"
                     if not phone_occurrences:
