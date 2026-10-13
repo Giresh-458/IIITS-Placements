@@ -58,7 +58,7 @@ def _search_result_matches_company(company_name: str, result: Dict[str, Any]) ->
     }
     page_title_prefixes = {
         "official", "contact", "careers", "career", "jobs", "job",
-        "website", "homepage", "home", "about", "recruitment",
+        "website", "homepage", "home", "about", "recruitment", "support",
     }
 
     original_tokens = re.findall(r"[a-z0-9]+", company_name.lower())
