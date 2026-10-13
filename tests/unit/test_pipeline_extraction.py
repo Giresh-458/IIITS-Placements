@@ -258,10 +258,10 @@ def test_main_scope_excludes_site_header_and_ignores_online_payment_navigation()
 
 
 
-def test_trident_detail_page_scopes_to_heading_article_and_extracts_ber्ger_virtual_drive():
+def test_trident_detail_page_scopes_to_heading_article_and_extracts_berger_virtual_drive():
     html = """
     <html><body>
-      <header><h1 class="site-title">Department of Training &amp; Placement</h1></header>
+      <header><div class="site-title">Department of Training &amp; Placement</div></header>
       <main id="main">
         <article class="featured-post">
           <h1 class="entry-title">Berger Paints – GD Schedule &amp; Instructions: Virtual Campus Drive on (16th October 2026)</h1>
