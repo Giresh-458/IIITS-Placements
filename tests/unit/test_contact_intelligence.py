@@ -447,3 +447,57 @@ def test_v_empty_company_search_is_marked_incomplete():
 
     assert status == PhoneVerificationState.CONTACT_DISCOVERY_INCOMPLETE.value
     assert "NO_SEARCH_RESULTS" in reason
+
+
+
+def test_phone_context_does_not_inherit_distant_talent_acquisition_heading():
+    from src.extraction.contact_extractor import extract_phone_occurrences, map_role_from_text
+
+    text = (
+        "Talent Acquisition and recruitment services are available here. "
+        + ("General company information. " * 30)
+        + "Contact us. Office phone: 044-48647244."
+    )
+    occurrences = extract_phone_occurrences(text)
+
+    assert len(occurrences) == 1
+    phone, context = occurrences[0]
+    assert phone == "044-48647244"
+    assert "Talent Acquisition" not in context
+    assert map_role_from_text(context) != ContactRole.TALENT_ACQUISITION
+
+
+def test_live_contact_role_is_based_on_context_near_the_phone():
+    from unittest.mock import patch
+    from src.extraction.contact_extractor import BoundedDiscoveryEngine
+
+    class FakeResponse:
+        status_code = 200
+        text = (
+            "<html><head><title>TestCorp Official</title></head><body>"
+            "<h1>Talent Acquisition Services</h1>"
+            + ("General business information. " * 30)
+            + "<section>Contact us. Office phone: 044-48647244.</section>"
+            "</body></html>"
+        )
+
+    result = {
+        "href": "https://testcorp.example/contact",
+        "title": "TestCorp contact",
+        "body": "TestCorp official contact page",
+    }
+    engine = BoundedDiscoveryEngine()
+
+    with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs:
+        with patch("httpx.Client.get", return_value=FakeResponse()):
+            with patch("src.extraction.contact_extractor.time.sleep"):
+                mock_ddgs.return_value.__enter__.return_value.text.side_effect = [
+                    [result],
+                    [],
+                ]
+                candidates = engine.attempt_live_discovery("TestCorp", "evt-1")
+
+    assert len(candidates) == 1
+    assert candidates[0].contact_role != ContactRole.TALENT_ACQUISITION
+    assert candidates[0].recruitment_relevance_confidence == ConfidenceLevel.LOW
+    assert "Talent Acquisition" not in candidates[0].evidence_text
