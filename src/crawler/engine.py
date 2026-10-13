@@ -28,6 +28,7 @@ class CrawlerEngine:
         # Track logical URLs outside Request.user_data because Crawlee may copy it on retry.
         self._recorded_logical_requests: set[str] = set()
         self._recorded_http_requests: set[str] = set()
+        self._recorded_successful_pages: set[str] = set()
         self.router = Router[BeautifulSoupCrawlingContext]()
         self.setup_router()
 
@@ -70,7 +71,13 @@ class CrawlerEngine:
             },
         )
 
-    def _record_page_success(self, institution: str) -> None:
+    def _record_page_success(self, request: Any, institution: str) -> None:
+        """Count a successful URL once, even when its handler is retried."""
+        request_identity = self._request_identity(request)
+        if request_identity in self._recorded_successful_pages:
+            return
+
+        self._recorded_successful_pages.add(request_identity)
         stats = self._source_stats(institution)
         stats["pages_succeeded"] += 1
         self.telemetry.pages_succeeded += 1
@@ -200,7 +207,7 @@ class CrawlerEngine:
                 stats['stop_reason'] = "AUTHENTICATION_REQUIRED"
                 return
 
-            self._record_page_success(inst)
+            self._record_page_success(context.request, inst)
             html = str(context.soup)
             text = context.soup.get_text(separator="\n", strip=True)
 
@@ -324,6 +331,7 @@ class CrawlerEngine:
         self._scheduled_urls_by_source = {}
         self._recorded_logical_requests = set()
         self._recorded_http_requests = set()
+        self._recorded_successful_pages = set()
         for source in self.seeds:
             if source.get("source_category") not in supported_categories:
                 continue
