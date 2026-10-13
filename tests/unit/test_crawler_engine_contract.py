@@ -207,7 +207,7 @@ async def test_terminal_crawl_failure_callback_records_403_and_attempt_counts(mo
                 attempt_request = SimpleNamespace(
                     url=request.url,
                     user_data=dict(request.user_data),
-                    id=request.id,
+                    # Crawlee Request exposes unique_key; it has no public id field.
                     unique_key=request.unique_key,
                     retry_count=retry_count,
                 )
