@@ -255,3 +255,79 @@ def test_main_scope_excludes_site_header_and_ignores_online_payment_navigation()
     assert "ONLINE FEE PAYMENT" not in candidate.raw_text_excerpt
     assert "COUNSELLING CODE" not in candidate.raw_text_excerpt
 
+
+
+
+def test_trident_detail_page_scopes_to_heading_article_and_extracts_ber्ger_virtual_drive():
+    html = """
+    <html><body>
+      <header><h1 class="site-title">Department of Training &amp; Placement</h1></header>
+      <main id="main">
+        <article class="featured-post">
+          <h1 class="entry-title">Berger Paints – GD Schedule &amp; Instructions: Virtual Campus Drive on (16th October 2026)</h1>
+          <div class="post-content">
+            <div class="entry-content">
+              Dear Students. Please find below the schedule, meeting links, and important
+              instructions for the Virtual Campus Drive scheduled on 16th October 2026.
+              Join the virtual call individually from a laptop/desktop with an active camera.
+            </div>
+          </div>
+        </article>
+        <article class="related-post">
+          <h2>Reliance Is Hiring Engineering Graduates</h2>
+          <div class="post-content">
+            <div class="entry-content">
+              Company: Reliance Industries Limited
+              Role: Graduate Engineer Trainee. CTC: 9.5 LPA.
+            </div>
+          </div>
+        </article>
+        <article class="related-post">
+          <h2>Another placement result</h2>
+          <div class="post-content"><div class="entry-content">Selected students list</div></div>
+        </article>
+      </main>
+    </body></html>
+    """
+    page = _page(
+        "flattened text that should not override the article HTML",
+        url=(
+            "https://trident.ac.in/placementnotice/"
+            "berger-paints-gd-schedule-instructions-virtual-campus-drive-on-16th-october-2026"
+        ),
+        institution="Trident Academy of Technology",
+    )
+    page["html"] = html
+
+    candidates = extract_candidates_from_pages([page])
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.company_name == "Berger Paints"
+    assert candidate.campus_mode == "VIRTUAL"
+    assert "Reliance Industries" not in candidate.raw_text_excerpt
+    assert "16th October 2026" in candidate.raw_text_excerpt
+
+
+def test_trident_archive_with_multiple_article_bodies_is_rejected():
+    html = """
+    <html><body>
+      <h1 class="site-title">Department of Training &amp; Placement</h1>
+      <main id="main">
+        <article><h2>Berger Paints Virtual Campus Drive</h2>
+          <div class="entry-content">Virtual Campus Drive scheduled on 16th October 2026.</div>
+        </article>
+        <article><h2>Reliance is hiring</h2>
+          <div class="entry-content">Company: Reliance Industries Limited. Role: GET.</div>
+        </article>
+      </main>
+    </body></html>
+    """
+    page = _page(
+        "archive page",
+        url="https://trident.ac.in/placementnotice",
+        institution="Trident Academy of Technology",
+    )
+    page["html"] = html
+
+    assert extract_candidates_from_pages([page]) == []
