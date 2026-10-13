@@ -29,11 +29,16 @@ def _is_plausible_company_candidate(value: str) -> bool:
     ):
         return False
 
-    invalid_edges = {
+    invalid_start_tokens = {
         "limited", "private", "will", "would", "be", "being", "conducting",
         "a", "an", "the", "and", "or", "by", "for", "of", "with", "on", "to", "in", "at",
     }
-    if tokens[0] in invalid_edges or tokens[-1] in invalid_edges:
+    invalid_end_tokens = {
+        "will", "would", "be", "being", "conducting", "a", "an", "the",
+        "and", "or", "by", "for", "of", "with", "on", "to", "in", "at",
+        "campus", "recruitment", "drive",
+    }
+    if tokens[0] in invalid_start_tokens or tokens[-1] in invalid_end_tokens:
         return False
 
     return True
@@ -67,12 +72,12 @@ def extract_from_text(text: str, url: str) -> Dict[str, Any]:
         r"corporation|industries|solutions|services|technologies|group)"
     )
     conducting_pattern = (
-        r"\\b("
+        r"\b("
         + name_token
-        + r"(?:[ \\t]+(?:" + name_token + r"|" + suffix_token + r")){0,5}"
-        + r")[ \\t]+(?i:will be conducting|is conducting|are conducting|will conduct)"
-        + r"[ \\t]+(?:(?i:a|the)[ \\t]+)?"
-        + r"(?i:campus[ \\t]+)?(?i:recruitment|placement|hiring)[ \\t]+drive\\b"
+        + r"(?:[ \t]+(?:" + name_token + r"|" + suffix_token + r")){0,5}"
+        + r")[ \t]+(?i:will be conducting|is conducting|are conducting|will conduct)"
+        + r"[ \t]+(?:(?i:a|the)[ \t]+)?"
+        + r"(?i:campus[ \t]+)?(?i:recruitment|placement|hiring)[ \t]+drive\b"
     )
     conducting_match = re.search(conducting_pattern, text)
     if conducting_match:
