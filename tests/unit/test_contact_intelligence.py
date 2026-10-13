@@ -267,6 +267,42 @@ def test_p2_explicit_bing_backend_filters_unrelated_results():
     assert engine.telemetry["irrelevant_results_filtered"] == 2
 
 
+
+def test_p3_single_token_company_name_rejects_similarly_named_brand():
+    from src.extraction.contact_extractor import (
+        BoundedDiscoveryEngine,
+        _search_result_matches_company,
+    )
+    from unittest.mock import patch
+
+    target_company = "Transenergy Pvt. Ltd."
+    unrelated = {
+        "href": "https://transenergy-global.com/",
+        "title": "TransEnergy Global - Purpose Fuels Change",
+        "body": "Accelerating the transition to clean energy.",
+    }
+    official = {
+        "href": "https://transenergypvtltd.in/contact/",
+        "title": "Contact - transenergypvtltd.in",
+        "body": "Transenergy Private Limited, Chennai.",
+    }
+
+    assert not _search_result_matches_company(target_company, unrelated)
+    assert _search_result_matches_company(target_company, official)
+
+    engine = BoundedDiscoveryEngine()
+    with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs, \\
+         patch("httpx.Client.get") as mock_get:
+        mock_ddgs.return_value.__enter__.return_value.text.return_value = [unrelated]
+        candidates = engine.attempt_live_discovery(target_company, "evt-1")
+
+    assert candidates == []
+    assert mock_get.call_count == 0
+    assert engine.per_company_telemetry[target_company]["urls_discovered"] == 0
+    assert engine.per_company_telemetry[target_company]["stop_reason"] == "NO_RELEVANT_RESULTS"
+
+
+
 def test_q_api_rate_limit():
     from src.extraction.contact_extractor import BoundedDiscoveryEngine
     from unittest.mock import patch
