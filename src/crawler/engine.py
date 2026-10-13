@@ -10,9 +10,7 @@ from crawlee.router import Router
 from crawlee import Request
 from playwright.async_api import async_playwright
 
-from src.models.domain import HiringEventCandidate
-from src.extraction.event_extractor import get_page_type, extract_event_candidate
-from src.extraction.date_normalizer import extract_dates, is_event_recent
+from src.extraction.event_extractor import extract_candidates_from_pages
 from src.dedup.event_dedup import deduplicate_events, normalize_url
 from src.telemetry.crawl_metrics import CrawlTelemetry
 
@@ -20,7 +18,8 @@ class CrawlerEngine:
     def __init__(self, seeds: List[Dict], max_pages: int = 15, max_depth: int = 2):
         self.seeds = seeds
         self.telemetry = CrawlTelemetry(run_id=str(uuid.uuid4()))
-        self.discovered_events: List[HiringEventCandidate] = []
+        self.discovered_events = []
+        self.crawled_pages: List[Dict[str, Any]] = []
         self.global_max_pages = max_pages
         self.global_max_depth = max_depth
         # Reserve URLs when they are queued to make per-source budgets reliable.
@@ -220,28 +219,18 @@ class CrawlerEngine:
                     url, fallback_html=html, fallback_text=text
                 )
 
-            get_page_type(url, text)
-            candidate = extract_event_candidate(
-                html, text, url, {'institution': inst, 'seed_url': seed_url}
+            # Stage 2 owns fetching and capture only. Parsing belongs to Stage 3.
+            self.crawled_pages.append(
+                {
+                    "url": url,
+                    "seed_url": seed_url,
+                    "institution": inst,
+                    "html": html,
+                    "text": text,
+                    "depth": depth,
+                    "http_status": status_code,
+                }
             )
-            if candidate:
-                edate, eraw, econf, rdate, rraw, rconf = extract_dates(text, html)
-                candidate.event_date = edate
-                candidate.event_date_raw = eraw
-                candidate.event_date_confidence = econf
-                candidate.registration_deadline = rdate
-                candidate.registration_deadline_raw = rraw
-
-                if edate:
-                    candidate.is_recent = is_event_recent(
-                        edate, datetime(2026, 9, 20), datetime(2026, 10, 4)
-                    )
-                    if candidate.is_recent:
-                        candidate.event_status = "COMPLETED_15D"
-
-                self.discovered_events.append(candidate)
-                self.telemetry.event_candidates_found += 1
-                stats['events_found'] += 1
 
             if depth < source_max_depth:
                 scheduled_urls = self._scheduled_urls_by_source.setdefault(inst, set())
@@ -298,7 +287,8 @@ class CrawlerEngine:
             self.telemetry.browser_failures += 1
             return fallback_html, fallback_text
 
-    async def run(self):
+    async def crawl_pages(self):
+        self.crawled_pages = []
         self.telemetry.started_at = datetime.utcnow()
         crawler = BeautifulSoupCrawler(
             request_handler=self.router,
@@ -382,7 +372,24 @@ class CrawlerEngine:
             self.telemetry.finished_at - self.telemetry.started_at
         ).total_seconds()
 
-        self.discovered_events = deduplicate_events(self.discovered_events)
-        self.telemetry.events_deduplicated = len(self.discovered_events)
+        # Stage 2 returns successful raw page captures; Stage 3 extracts events.
+        return self.crawled_pages, self.telemetry
 
-        return self.discovered_events, self.telemetry
+
+    async def run(self):
+        """Backward-compatible crawl-and-extract API for legacy callers."""
+        pages, telemetry = await self.crawl_pages()
+        candidates = extract_candidates_from_pages(pages)
+        self.discovered_events = candidates
+        for candidate in candidates:
+            telemetry.event_candidates_found += 1
+            stats = self._source_stats(candidate.institution)
+            stats["events_found"] += 1
+
+        self.discovered_events = deduplicate_events(self.discovered_events)
+        telemetry.events_deduplicated = len(self.discovered_events)
+        telemetry.finished_at = datetime.utcnow()
+        telemetry.duration_seconds = (
+            telemetry.finished_at - telemetry.started_at
+        ).total_seconds()
+        return self.discovered_events, telemetry
