@@ -13,12 +13,12 @@ def test_child_url_selection_is_deterministic_and_respects_remaining_budget():
     scheduled = {"https://example.edu/start"}
     selected = engine._select_child_urls(
         links=[
+            ("/placementnotice/wp-login.php?action=logout", "Log out"),
+            ("/about", "About"),
             ("/careers/a", "Open careers"),
             ("/notices/b", "Placement notices"),
             ("/careers/a", "Open careers again"),
             ("https://external.example/hiring", "Hiring"),
-            ("/about", "About"),
-            ("/placementnotice/wp-login.php?action=logout", "Log out"),
         ],
         page_url="https://example.edu/index",
         seed_url="https://example.edu/start",
@@ -152,14 +152,22 @@ async def test_pipeline_crawling_fails_closed_when_every_source_fails(monkeypatc
 
 def test_record_page_success_updates_aggregate_and_per_source_counters():
     engine = CrawlerEngine(seeds=[])
+    request = SimpleNamespace(
+        id="request-1",
+        unique_key="https://example.edu/placements",
+        url="https://example.edu/placements",
+    )
 
+    engine._record_logical_page_attempt(request, "Example College")
     engine._record_page_success("Example College")
 
     stats = engine.telemetry.source_stats["Example College"]
+    assert engine.telemetry.pages_attempted == 1
     assert engine.telemetry.pages_succeeded == 1
+    assert engine.telemetry.requests_attempted == 1
     assert engine.telemetry.requests_succeeded == 1
+    assert stats["pages_visited"] == 1
     assert stats["pages_succeeded"] == 1
-    assert stats["pages_visited"] == 0
 
 
 @pytest.mark.asyncio
