@@ -63,7 +63,7 @@ def test_campus_mode_extraction():
 
 def test_generic_online_navigation_text_does_not_set_campus_mode():
     res = extract_from_text(
-        "ONLINE FEE PAYMENT\\nCampus Recruitment Drive by Example",
+        "ONLINE FEE PAYMENT\nCampus Recruitment Drive by Example",
         "https://example.edu/event",
     )
     assert res["campus_mode_candidate"] is None
@@ -79,7 +79,7 @@ def test_explicit_virtual_campus_drive_sets_virtual_mode():
 
 def test_drive_mode_label_can_set_virtual_mode():
     res = extract_from_text(
-        "Company: Example\\nMode of Drive: Online\\nCampus Recruitment Drive",
+        "Company: Example\nMode of Drive: Online\nCampus Recruitment Drive",
         "https://example.edu/event",
     )
     assert res["campus_mode_candidate"] == "VIRTUAL"
