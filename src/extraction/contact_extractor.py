@@ -86,7 +86,7 @@ def _search_result_matches_company(company_name: str, result: Dict[str, Any]) ->
     # uses the same token (e.g. TransEnergy Global vs Transenergy Pvt. Ltd.).
     suffix_tokens = [token for token in original_tokens if token in legal_tokens]
     if suffix_tokens:
-        aliases = {core_compact}
+        aliases = set()
         variants = [""]
         for token in suffix_tokens:
             choices = legal_suffix_aliases[token]
