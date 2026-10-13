@@ -185,42 +185,129 @@ def get_page_type(url: str, text: str) -> str:
             return 'EVENT_DETAIL'
     return 'OTHER'
 
-def extract_event_candidate(html: str, text: str, url: str, metadata: dict = None) -> Any:
-    """Legacy helper for crawler."""
-    from src.models.domain import HiringEventCandidate
+def _looks_like_event_listing(scope) -> bool:
+    """Identify archive/index pages whose text combines multiple unrelated notices."""
+    event_terms = re.compile(
+        r"\b(campus|placement|recruitment|hiring|job opening|career drive|placement drive)\b",
+        re.IGNORECASE,
+    )
+    event_headings = {
+        re.sub(r"\s+", " ", heading.get_text(" ", strip=True)).strip().lower()
+        for heading in scope.find_all(["h2", "h3", "h4", "h5"])
+        if event_terms.search(heading.get_text(" ", strip=True))
+    }
+    event_links = [
+        link for link in scope.find_all("a", href=True)
+        if event_terms.search(
+            f"{link.get_text(' ', strip=True)} {link.get('href', '')}"
+        )
+    ]
+    return len(event_headings) >= 2 or len(event_links) >= 5
+
+
+def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | None:
+    """Return text for one page/article, excluding site chrome and related posts.
+
+    Archive pages are intentionally rejected here: treating an index of several
+    notices as one event can mix a company, role, and date from different posts.
+    """
+    if not html:
+        return fallback_text
+
     from bs4 import BeautifulSoup
-    
-    # Flatten tables if html is provided
-    if html:
-        soup = BeautifulSoup(html, 'html.parser')
-        for table in soup.find_all('table'):
-            headers = [th.get_text(strip=True) for th in table.find_all('th')]
-            for row in table.find_all('tr'):
-                cells = [td.get_text(strip=True) for td in row.find_all('td')]
-                if cells:
-                    row_text = []
-                    for i, cell in enumerate(cells):
-                        if i < len(headers) and headers[i]:
-                            row_text.append(f"{headers[i]} : {cell}")
-                        else:
-                            row_text.append(cell)
-                    
-                    # Create a new div to replace the row
-                    new_div = soup.new_tag('div')
-                    new_div.string = " | ".join(row_text)
-                    table.insert_before(new_div)
-            # Remove the original table
-            table.decompose()
-        text = soup.get_text(separator=' ')
-        
-    # We only care about actual event detail pages
-    if get_page_type(url, text) != 'EVENT_DETAIL':
+
+    soup = BeautifulSoup(html, "html.parser")
+    for element in list(soup.find_all(["script", "style", "nav", "footer", "aside", "form", "noscript"])):
+        element.decompose()
+
+    chrome_tokens = (
+        "related-post", "related_posts", "sidebar", "post-navigation",
+        "comments-area", "comment-respond", "site-footer", "footer-widget",
+        "widget-area", "recent-posts", "recent-notices", "breadcrumb",
+        "nav-menu", "social-share", "author-box",
+    )
+    for element in list(soup.find_all(True)):
+        classes = element.get("class", [])
+        if isinstance(classes, str):
+            classes = [classes]
+        identifier = str(element.get("id", ""))
+        label = " ".join([identifier, *[str(item) for item in classes]]).lower()
+        if any(token in label for token in chrome_tokens):
+            element.decompose()
+
+    # Prefer a single article-body container. Multiple matching bodies usually
+    # indicate an archive page or a template with multiple post cards.
+    body_selectors = (
+        "[itemprop='articleBody']",
+        ".entry-content",
+        ".post-content",
+        ".article-content",
+        ".td-post-content",
+        ".single-post-content",
+    )
+    scope = None
+    for selector in body_selectors:
+        matches = soup.select(selector)
+        if matches:
+            if len(matches) != 1:
+                return None
+            scope = matches[0]
+            break
+
+    if scope is None:
+        h1 = soup.find("h1")
+        h1_article = h1.find_parent("article") if h1 else None
+        articles = soup.find_all("article")
+        if h1_article is not None:
+            scope = h1_article
+        elif len(articles) == 1:
+            scope = articles[0]
+        elif len(articles) > 1:
+            return None
+        else:
+            scope = soup.body or soup
+
+    if _looks_like_event_listing(scope):
         return None
-        
+
+    # Preserve table values in the scoped article while removing table layout.
+    for table in list(scope.find_all("table")):
+        headers = [th.get_text(" ", strip=True) for th in table.find_all("th")]
+        for row in table.find_all("tr"):
+            cells = [td.get_text(" ", strip=True) for td in row.find_all("td")]
+            if not cells:
+                continue
+            row_text = []
+            for index, cell in enumerate(cells):
+                if index < len(headers) and headers[index]:
+                    row_text.append(f"{headers[index]}: {cell}")
+                else:
+                    row_text.append(cell)
+            new_div = soup.new_tag("div")
+            new_div.string = " | ".join(row_text)
+            table.insert_before(new_div)
+        table.decompose()
+
+    return scope.get_text(separator=" ", strip=True)
+
+
+def extract_event_candidate(html: str, text: str, url: str, metadata: dict = None) -> Any:
+    """Extract one event candidate only from the page's primary article content."""
+    from src.models.domain import HiringEventCandidate
+
+    scoped_text = _extract_candidate_text(html, text, url)
+    if scoped_text is None:
+        return None
+    text = scoped_text
+
+    # Do not promote generic navigation or non-hiring notices to event records.
+    if get_page_type(url, text) != "EVENT_DETAIL":
+        return None
+
     extracted = extract_from_text(text, url)
     if not extracted.get("company_candidate"):
         return None
-        
+
     return HiringEventCandidate(
         event_url=url,
         source_seed_url=metadata.get('seed_url') if metadata and metadata.get('seed_url') else "",
@@ -230,12 +317,11 @@ def extract_event_candidate(html: str, text: str, url: str, metadata: dict = Non
         role=extracted.get("role_candidate"),
         ctc_raw=extracted.get("ctc_candidate"),
         batch=extracted.get("batch_candidate"),
-        eligible_branches=[b.strip() for b in extracted.get("branch_candidate", "").split(',')] if extracted.get("branch_candidate") else [],
+        eligible_branches=[b.strip() for b in extracted.get("branch_candidate", "").split(',')] if extracted.get("branch_candidate') else [],
         campus_mode=extracted.get("campus_mode_candidate"),
         evidence=extracted.get("evidence", {}),
         raw_text_excerpt=text[:1000]
     )
-
 
 
 def extract_candidates_from_pages(pages):
@@ -265,17 +351,23 @@ def extract_candidates_from_pages(pages):
                 f"Crawled page record {index} requires an institution."
             )
 
+        scoped_text = _extract_candidate_text(html, text, url)
+        if scoped_text is None:
+            continue
+
         candidate = extract_event_candidate(
-            html,
-            text,
+            "",
+            scoped_text,
             url,
             {"institution": institution, "seed_url": seed_url},
         )
         if not candidate:
             continue
 
+        # Date parsing must use the same article-scoped content as company/role
+        # parsing; otherwise a sidebar or related post can supply another event's date.
         event_date, event_raw, event_conf, reg_date, reg_raw, reg_conf = extract_dates(
-            text, html
+            scoped_text, scoped_text
         )
         candidate.event_date = event_date
         candidate.event_date_raw = event_raw
