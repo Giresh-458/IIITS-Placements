@@ -498,6 +498,7 @@ def test_live_contact_role_is_based_on_context_near_the_phone():
                 candidates = engine.attempt_live_discovery("TestCorp", "evt-1")
 
     assert len(candidates) == 1
+    assert candidates[0].contact_role == ContactRole.COMPANY_SWITCHBOARD
     assert candidates[0].contact_role != ContactRole.TALENT_ACQUISITION
     assert candidates[0].recruitment_relevance_confidence == ConfidenceLevel.LOW
     assert "Talent Acquisition" not in candidates[0].evidence_text
