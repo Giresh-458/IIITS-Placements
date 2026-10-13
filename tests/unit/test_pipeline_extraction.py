@@ -219,3 +219,39 @@ def test_scoped_extraction_preserves_html_block_boundaries():
     assert "TechCorp Solutions" in candidate.company_name
     assert "Software Engineer" in candidate.role
     assert candidate.ctc_raw == "12 LPA"
+
+
+def test_main_scope_excludes_site_header_and_ignores_online_payment_navigation():
+    html = """
+    <html><body>
+      <header class="site-header">
+        <div>COUNSELLING CODE: 4680</div>
+        <a href="/payments">ONLINE FEE PAYMENT</a>
+        <a href="/login">STAFF LOGIN</a>
+      </header>
+      <main id="main-content">
+        <h1>From Campus to Career: Transenergy Pvt. Ltd. Recruitment Drive</h1>
+        <p>
+          AAA College of Engineering and Technology successfully conducted a
+          Campus Recruitment Drive by Transenergy Pvt. Ltd., Chennai, on
+          10 October 2026 for final-year students.
+        </p>
+      </main>
+    </body></html>
+    """
+    candidate = extract_event_candidate(
+        html,
+        "ONLINE FEE PAYMENT Transenergy Pvt. Ltd. Recruitment Drive",
+        "https://aaaenggcoll.ac.in/from-campus-to-career-transenergy-pvt-ltd-recruitment-drive-on-10-10-2026",
+        {
+            "institution": "AAA College of Engineering & Technology",
+            "seed_url": "https://aaaenggcoll.ac.in/placement/",
+        },
+    )
+
+    assert candidate is not None
+    assert candidate.company_name == "Transenergy Pvt. Ltd."
+    assert candidate.campus_mode is None
+    assert "ONLINE FEE PAYMENT" not in candidate.raw_text_excerpt
+    assert "COUNSELLING CODE" not in candidate.raw_text_excerpt
+
