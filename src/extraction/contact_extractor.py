@@ -137,7 +137,7 @@ def map_role_from_text(text: str) -> ContactRole:
         return ContactRole.SALES
     if "support" in text_lower or "customer service" in text_lower:
         return ContactRole.CUSTOMER_SUPPORT
-    if re.search(r"\\b(?:contact us|office phone|office number|switchboard|telephone|phone|mobile)\\b", text_lower):
+    if re.search(r"\b(?:contact us|office phone|office number|switchboard|telephone|phone|mobile)\b", text_lower):
         return ContactRole.COMPANY_SWITCHBOARD
     return ContactRole.UNKNOWN
 
