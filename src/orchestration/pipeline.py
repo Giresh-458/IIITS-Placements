@@ -248,7 +248,9 @@ class PipelineOrchestrator:
         import json
         from pathlib import Path
 
-        normalized_events = state.get("normalized_events") or []
+        normalized_events = state.get("normalized_events", [])
+        if normalized_events is None:
+            normalized_events = []
         if not isinstance(normalized_events, list):
             raise RuntimeError("Evidence stage expected normalized_events to be a list.")
 
@@ -273,7 +275,9 @@ class PipelineOrchestrator:
                     f"Evidence stage event at index {event_index} has no event_id."
                 )
 
-            event_evidence = event.get("evidence") or []
+            event_evidence = event.get("evidence", [])
+            if event_evidence is None:
+                event_evidence = []
             if not isinstance(event_evidence, list):
                 raise RuntimeError(
                     f"Evidence for event {event_id} must be a list."
@@ -289,7 +293,12 @@ class PipelineOrchestrator:
 
                 # Support normalized field evidence and the existing legacy
                 # CTC-conflict evidence shape without dropping either.
-                field = item.get("field") or item.get("type") or "unknown"
+                field = item.get("field") or item.get("type")
+                if not isinstance(field, str) or not field.strip():
+                    raise RuntimeError(
+                        f"Evidence item {evidence_index} for event {event_id} "
+                        "has no field/type identifier."
+                    )
                 if "raw_value" in item:
                     raw_value = item.get("raw_value")
                 elif "raw" in item:
