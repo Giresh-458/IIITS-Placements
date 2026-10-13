@@ -33,7 +33,36 @@ def normalize_candidates(candidates: List[HiringEventCandidate]) -> List[Normali
             continue
             
         source_url = row.event_url or row.source_seed_url
-        
+        # Keep the detail page and discovery seed as provenance. A normalized
+        # event can be deduplicated from multiple pages, so source_urls is a
+        # unique union of every contributing detail/seed URL.
+        source_urls = list(dict.fromkeys(
+            url for url in (row.event_url, row.source_seed_url) if url
+        ))
+
+        evidence_raw_values = {
+            "company": raw_comp,
+            "role": raw_role,
+            "branch": raw_branches,
+            "batch": raw_batch,
+            "ctc": raw_ctc,
+            "event_date": raw_date_text,
+            "registration_deadline": raw_reg,
+            "campus_mode": raw_campus,
+        }
+        normalized_evidence = []
+        for evidence_field, source_evidence in (row.evidence or {}).items():
+            if not isinstance(source_evidence, dict):
+                continue
+            normalized_evidence.append({
+                "field": evidence_field,
+                "raw_value": evidence_raw_values.get(evidence_field),
+                "evidence_url": source_url or None,
+                "evidence_text": source_evidence.get("text") or source_evidence.get("evidence_text"),
+                "extraction_method": source_evidence.get("method") or source_evidence.get("extraction_method"),
+                "confidence": source_evidence.get("confidence"),
+            })
+
         comp_norm, comp_aliases, comp_warnings, comp_valid = normalize_company(raw_comp)
         if not comp_norm: comp_norm = "UNKNOWN"
         
@@ -83,6 +112,8 @@ def normalize_candidates(candidates: List[HiringEventCandidate]) -> List[Normali
             "event_status": status,
             "institution": inst,
             "source_seed_id": None,
+            "source_seed_url": row.source_seed_url or None,
+            "source_urls": source_urls,
             "company_name": comp_norm if comp_norm != "UNKNOWN" else None,
             "company_name_raw": raw_comp,
             "company_aliases": comp_aliases,
@@ -111,7 +142,10 @@ def normalize_candidates(candidates: List[HiringEventCandidate]) -> List[Normali
             "campus_mode_raw": raw_campus,
             "event_type": event_type,
             "event_url": source_url,
-            "evidence": [],
+            # Do not copy row.raw_text_excerpt into raw_event_text: the source
+            # can contain unrelated roster/contact data. Preserve only the
+            # field-specific extraction evidence already captured upstream.
+            "evidence": normalized_evidence,
             "is_recent": False
         }
         
@@ -129,6 +163,17 @@ def normalize_candidates(candidates: List[HiringEventCandidate]) -> List[Normali
 
         if identity in dedup_map:
             existing = dedup_map[identity]
+            # Preserve provenance from every candidate folded into this
+            # canonical event rather than keeping only the first page's trace.
+            existing["source_urls"] = list(dict.fromkeys(
+                (existing.get("source_urls") or []) + (event_dict.get("source_urls") or [])
+            ))
+            if not existing.get("source_seed_url") and event_dict.get("source_seed_url"):
+                existing["source_seed_url"] = event_dict["source_seed_url"]
+            for evidence_item in event_dict.get("evidence") or []:
+                if evidence_item not in existing.setdefault("evidence", []):
+                    existing["evidence"].append(evidence_item)
+
             if not existing["company_name"] and event_dict["company_name"]: existing["company_name"] = event_dict["company_name"]
             if not existing["role"] and event_dict["role"]:
                 existing["role"] = event_dict["role"]
