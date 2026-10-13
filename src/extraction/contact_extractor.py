@@ -167,12 +167,12 @@ def extract_phone_occurrences(text: str, context_chars: int = 120):
         if not is_likely_phone(digits) or digits in seen_digits:
             continue
         seen_digits.add(digits)
-        if "\\n" in text:
+        if "\n" in text:
             # Fetched page text preserves DOM text-node boundaries. Keep role
             # evidence inside the phone's own line/block instead of borrowing
             # a distant heading or a neighboring services/navigation label.
-            line_start = text.rfind("\\n", 0, match.start()) + 1
-            line_end = text.find("\\n", match.end())
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_end = text.find("\n", match.end())
             if line_end < 0:
                 line_end = len(text)
             start = max(line_start, match.start() - context_chars)
@@ -181,7 +181,7 @@ def extract_phone_occurrences(text: str, context_chars: int = 120):
             # Search snippets are often a single line, so use a bounded window.
             start = max(0, match.start() - context_chars)
             end = min(len(text), match.end() + context_chars)
-        context = re.sub(r"\\s+", " ", text[start:end]).strip()
+        context = re.sub(r"\s+", " ", text[start:end]).strip()
         occurrences.append((phone, context))
     return occurrences
 
@@ -336,7 +336,7 @@ class BoundedDiscoveryEngine:
                     if soup.title and soup.title.string:
                         lineage_record["page_title"] = soup.title.string.strip()
                         
-                    text_content = soup.get_text(separator='\\n', strip=True)
+                    text_content = soup.get_text(separator='\n', strip=True)
                     
                     phone_occurrences = extract_phone_occurrences(text_content)
                     phone_context_source = "fetched page"
