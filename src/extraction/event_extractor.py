@@ -167,15 +167,42 @@ def extract_from_text(text: str, url: str) -> Dict[str, Any]:
             break
 
             
-    # Campus Mode
-    if "physical campus drive" in text.lower() or "on-campus" in text.lower() or "on campus" in text.lower():
-        extracted["campus_mode_candidate"] = "ON_CAMPUS"
-    elif "pool campus" in text.lower() or "pooled campus" in text.lower():
-        extracted["campus_mode_candidate"] = "POOL_CAMPUS"
-    elif "virtual" in text.lower() or "online" in text.lower():
-        extracted["campus_mode_candidate"] = "VIRTUAL"
+    # Campus mode must be supported by hiring-event context. Generic site text
+    # such as "ONLINE FEE PAYMENT" must not classify an unrelated drive as virtual.
+    extracted["campus_mode_candidate"] = _infer_campus_mode(text)
 
     return extracted
+
+
+def _infer_campus_mode(text: str) -> str | None:
+    """Infer mode only from explicit drive-mode phrases, not generic page words."""
+    normalized = re.sub(r"\\s+", " ", text or "").lower()
+
+    if re.search(
+        r"\\bphysical\\s+campus\\s+drive\\b"
+        r"|\\bon[- ]campus\\s+(?:recruitment\\s+)?drive\\b"
+        r"|\\bmode\\s+of\\s+(?:the\\s+)?drive\\s*[:|=-]\\s*physical\\b",
+        normalized,
+    ):
+        return "ON_CAMPUS"
+
+    if re.search(
+        r"\\b(?:pool|pooled)\\s+campus\\s+(?:recruitment\\s+)?drive\\b"
+        r"|\\bmode\\s+of\\s+(?:the\\s+)?drive\\s*[:|=-]\\s*(?:pool|pooled)\\b",
+        normalized,
+    ):
+        return "POOL_CAMPUS"
+
+    if re.search(
+        r"\\b(?:virtual|online)\\s+(?:campus\\s+)?(?:recruitment\\s+)?drive\\b"
+        r"|\\bmode\\s+of\\s+(?:the\\s+)?drive\\s*[:|=-]\\s*(?:virtual|online)\\b"
+        r"|\\b(?:campus\\s+)?drive\\s+(?:will be|is being|was)\\s+"
+        r"(?:held|conducted)\\s+(?:online|virtually)\\b",
+        normalized,
+    ):
+        return "VIRTUAL"
+
+    return None
 
 def get_page_type(url: str, text: str) -> str:
     """Legacy helper for crawler."""
@@ -271,7 +298,16 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
         elif len(articles) > 1:
             return None
         else:
-            scope = soup.body or soup
+            # Some institutional WordPress themes do not use <article> or a
+            # recognized article-body class. Prefer the single semantic main
+            # region to avoid treating the site's header/navigation as event text.
+            main_regions = soup.find_all("main")
+            if len(main_regions) == 1:
+                scope = main_regions[0]
+            elif len(main_regions) > 1:
+                return None
+            else:
+                scope = soup.body or soup
 
     if _looks_like_event_listing(scope):
         return None
