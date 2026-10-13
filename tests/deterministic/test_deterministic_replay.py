@@ -27,7 +27,7 @@ async def test_end_to_end_replay(setup_db):
         state['crawl_telemetry'] = {}
         state['telemetry']['crawl_telemetry'] = {}
         page_text = (
-            "Campus Recruitment Drive by Valid Corp Int. "
+            "Campus Recruitment Drive by Valid Corp Int for SDE. "
             "Role: SDE. CTC: 10 LPA. Batch 2026. Branches: CSE, IT"
         )
         state['crawled_pages'] = [{
