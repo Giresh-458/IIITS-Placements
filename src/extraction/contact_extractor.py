@@ -35,35 +35,82 @@ def generate_queries(company_name: str) -> List[str]:
 
 
 def _search_result_matches_company(company_name: str, result: Dict[str, Any]) -> bool:
-    """Reject obvious cross-company search noise before spending a fetch slot."""
-    legal_suffixes = {
-        "pvt", "private", "ltd", "limited", "llp", "inc", "incorporated",
-        "corp", "corporation", "company", "co", "plc",
-    }
-    generic_markers = {
-        "the", "india", "global", "international", "services", "service",
-        "solutions", "solution", "technologies", "technology", "systems",
-        "system", "group", "industries", "industry", "enterprise", "enterprises",
-    }
-    company_tokens = [
-        token for token in re.findall(r"[a-z0-9]+", company_name.lower())
-        if token not in legal_suffixes
-    ]
-    haystack = " ".join(
-        str(result.get(field, "") or "")
-        for field in ("title", "body", "href")
-    ).lower()
-    haystack_compact = re.sub(r"[^a-z0-9]", "", haystack)
-    company_compact = "".join(company_tokens)
+    """Reject results for similarly named but different companies.
 
-    if company_compact and company_compact in haystack_compact:
+    For company names that reduce to a single distinctive token after legal
+    suffix removal (for example, "Transenergy Pvt. Ltd."), matching that token
+    alone is too permissive: it accepts "TransEnergy Global". Require the full
+    legal-name alias, an exact host label, or an exact/known page-title form.
+    """
+    legal_suffix_aliases = {
+        "pvt": ("pvt", "private"),
+        "private": ("pvt", "private"),
+        "ltd": ("ltd", "limited"),
+        "limited": ("ltd", "limited"),
+        "llp": ("llp",),
+        "inc": ("inc", "incorporated"),
+        "incorporated": ("inc", "incorporated"),
+        "corp": ("corp", "corporation"),
+        "corporation": ("corp", "corporation"),
+        "company": ("company", "co"),
+        "co": ("company", "co"),
+        "plc": ("plc",),
+    }
+    page_title_prefixes = {
+        "official", "contact", "careers", "career", "jobs", "job",
+        "website", "homepage", "home", "about", "recruitment",
+    }
+
+    original_tokens = re.findall(r"[a-z0-9]+", company_name.lower())
+    if not original_tokens:
+        return False
+
+    legal_tokens = set(legal_suffix_aliases)
+    company_core = [token for token in original_tokens if token not in legal_tokens]
+    if not company_core:
+        return False
+
+    fields = {
+        field: str(result.get(field, "") or "")
+        for field in ("title", "body", "href")
+    }
+    haystack = " ".join(fields.values()).lower()
+    haystack_compact = re.sub(r"[^a-z0-9]", "", haystack)
+    core_compact = "".join(company_core)
+
+    # Multi-token names are materially more discriminative than one-word brands.
+    if len(company_core) > 1:
+        return bool(core_compact and core_compact in haystack_compact)
+
+    # Single-token brands must not match solely because another organization
+    # uses the same token (e.g. TransEnergy Global vs Transenergy Pvt. Ltd.).
+    suffix_tokens = [token for token in original_tokens if token in legal_tokens]
+    if suffix_tokens:
+        aliases = {core_compact}
+        variants = [""]
+        for token in suffix_tokens:
+            choices = legal_suffix_aliases[token]
+            variants = [prefix + choice for prefix in variants for choice in choices]
+        aliases.update(core_compact + suffix for suffix in variants if suffix)
+        if any(alias in haystack_compact for alias in aliases):
+            return True
+
+    # A single-token company without a legal suffix can match its exact domain
+    # label or a title containing only the company plus a page-type prefix.
+    href = fields["href"].lower()
+    host = re.sub(r"^https?://", "", href).split("/", 1)[0].split(":", 1)[0]
+    host_labels = [re.sub(r"[^a-z0-9]", "", label) for label in host.split(".")]
+    if core_compact in host_labels:
         return True
 
-    distinctive_tokens = [
-        token for token in company_tokens
-        if len(token) >= 5 and token not in generic_markers
-    ]
-    return any(token in haystack_compact for token in distinctive_tokens)
+    title_tokens = re.findall(r"[a-z0-9]+", fields["title"].lower())
+    if title_tokens and title_tokens[0] == company_core[0]:
+        trailing = title_tokens[1:]
+        if not trailing or (trailing and trailing[0] in page_title_prefixes):
+            return True
+
+    return False
+
 
 def map_role_from_text(text: str) -> ContactRole:
     text_lower = text.lower()
