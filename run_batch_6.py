@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime
 from src.models.domain import NormalizedHiringEvent
-from src.classification.business_rules import apply_business_filters
+from src.classification.business_rules import apply_business_filters, current_as_of_date
 
 def main():
     print("Loading trusted canonical event dataset...")
@@ -13,7 +13,8 @@ def main():
     print(f"Loaded {len(events)} canonical events.")
     
     print("Applying business rules (Batch 6)...")
-    res = apply_business_filters(events, as_of=datetime(2026, 10, 5))
+    as_of = current_as_of_date()
+    res = apply_business_filters(events, as_of=as_of)
     classifications = res["classifications"]
     
     # Save the output
@@ -30,6 +31,7 @@ def main():
     # Generate Batch 6 Report
     md = "# Batch 6: Business Logic & Event Filtering Report\n\n"
     md += f"**Execution Date**: {datetime.utcnow().isoformat()}Z\n"
+    md += f"**Qualification As-of Date**: {as_of.date().isoformat()}\n"
     md += f"**Input Dataset**: `artifacts/normalized_hiring_events.json`\n"
     md += f"**Output Dataset**: `artifacts/classified_events.json`\n\n"
     

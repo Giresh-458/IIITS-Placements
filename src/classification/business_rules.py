@@ -14,9 +14,15 @@ class BusinessClassification:
     target_fit: str = "UNKNOWN"
     filter_reasons: List[str] = dataclasses.field(default_factory=list)
 
+def current_as_of_date() -> datetime:
+    """Return today's local date at midnight for date-only qualification rules."""
+    now = datetime.now().astimezone()
+    return datetime(now.year, now.month, now.day)
+
+
 def classify_event(event: NormalizedHiringEvent, as_of: datetime = None) -> BusinessClassification:
     if as_of is None:
-        as_of = datetime(2026, 10, 5)
+        as_of = current_as_of_date()
 
     cls = BusinessClassification()
     cls.campus_mode = event.campus_mode or "UNKNOWN"
