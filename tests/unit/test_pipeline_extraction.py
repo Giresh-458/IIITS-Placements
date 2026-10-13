@@ -376,3 +376,54 @@ def test_aaa_detail_page_without_main_strips_site_header_from_fallback():
     assert "COUNSELLING CODE" not in candidate.raw_text_excerpt
 
 
+
+
+
+def test_company_extraction_ignores_social_links_before_gotrust():
+    html = """
+    <html><body>
+      <main>
+        <div class="social-links">
+          <a>LinkedIn</a><a>Instagram</a><a>Whatsapp</a><a>Youtube</a>
+        </div>
+        <h2>GoTrust Campus Recruitment Drive</h2>
+        <p>GoTrust campus recruitment drive for graduating students.</p>
+      </main>
+    </body></html>
+    """
+    candidate = extract_event_candidate(
+        html,
+        "LinkedIn Instagram Whatsapp Youtube GoTrust Campus Recruitment Drive",
+        "https://example.edu/notice/gotrust-campus-recruitment-drive",
+        {"institution": "Test College", "seed_url": "https://example.edu/notice"},
+    )
+
+    assert candidate is not None
+    assert candidate.company_name == "GoTrust"
+    assert "\n" not in candidate.company_name
+    assert "LinkedIn" not in candidate.company_name
+
+
+def test_company_extraction_handles_itc_sentence_without_capturing_tail_fragment():
+    html = """
+    <html><body><main>
+      <article>
+        <h1>ITC Limited campus recruitment MBA Marketing 2027</h1>
+        <div class="entry-content">
+          <p>ITC Limited</p>
+          <p>will be conducting a Campus Recruitment Drive for MBA Marketing
+          candidates of 2027 batch. Registration closes 9 October 2026.</p>
+        </div>
+      </article>
+    </main></body></html>
+    """
+    candidate = extract_event_candidate(
+        html,
+        "ITC Limited will be conducting a Campus Recruitment Drive",
+        "https://example.edu/placementnotice/itc-limited-campus-recruitment",
+        {"institution": "Test College", "seed_url": "https://example.edu/placementnotice"},
+    )
+
+    assert candidate is not None
+    assert candidate.company_name == "ITC Limited"
+    assert "will be conducting" not in candidate.company_name.lower()

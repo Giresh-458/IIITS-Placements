@@ -150,16 +150,46 @@ def map_side_from_role(role: ContactRole) -> ContactSide:
         return ContactSide.COMPANY
     return ContactSide.UNKNOWN
 
+def extract_phone_occurrences(text: str, context_chars: int = 120):
+    """Return each distinct phone with nearby text that actually supports its role."""
+    if not text:
+        return []
+
+    pattern = re.compile(
+        r'(?:\+?91[\-\s]?)?[6-9]\d{2}[\-\s]?\d{3}[\-\s]?\d{4}'
+        r'|\b0\d{2,4}[\-\s]?\d{6,8}\b'
+    )
+    occurrences = []
+    seen_digits = set()
+    for match in pattern.finditer(text):
+        phone = match.group(0).strip()
+        digits = re.sub(r'[\s\-\(\)\+]', '', phone)
+        if not is_likely_phone(digits) or digits in seen_digits:
+            continue
+        seen_digits.add(digits)
+        if "\n" in text:
+            # Fetched page text preserves DOM text-node boundaries. Keep role
+            # evidence inside the phone's own line/block instead of borrowing
+            # a distant heading or a neighboring services/navigation label.
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_end = text.find("\n", match.end())
+            if line_end < 0:
+                line_end = len(text)
+            start = max(line_start, match.start() - context_chars)
+            end = min(line_end, match.end() + context_chars)
+        else:
+            # Search snippets are often a single line, so use a bounded window.
+            start = max(0, match.start() - context_chars)
+            end = min(len(text), match.end() + context_chars)
+        context = re.sub(r"\s+", " ", text[start:end]).strip()
+        occurrences.append((phone, context))
+    return occurrences
+
+
 def extract_phones_from_text(text: str) -> List[str]:
-    # Regex to catch Indian mobile/landline-ish numbers or international formats, very broadly.
-    pattern = r'(?:\+?91[\-\s]?)?[6-9]\d{2}[\-\s]?\d{3}[\-\s]?\d{4}|\b0\d{2,4}[\-\s]?\d{6,8}\b'
-    matches = re.findall(pattern, text)
-    phones = []
-    for m in set(matches):
-        clean = re.sub(r'[\s\-\(\)\+]', '', m)
-        if is_likely_phone(clean):
-            phones.append(m.strip())
-    return phones
+    """Backward-compatible list of phone strings, without throwing away order."""
+    return [phone for phone, _context in extract_phone_occurrences(text)]
+
 
 class BoundedDiscoveryEngine:
     def __init__(self):
@@ -306,26 +336,27 @@ class BoundedDiscoveryEngine:
                     if soup.title and soup.title.string:
                         lineage_record["page_title"] = soup.title.string.strip()
                         
-                    text_content = soup.get_text(separator=' ', strip=True)
+                    text_content = soup.get_text(separator='\n', strip=True)
                     
-                    # Combine snippet and page text for evidence
-                    full_evidence = snippet + " | " + text_content[:500] 
-                    phones = extract_phones_from_text(text_content)
-                    
-                    if not phones:
-                        # try snippet
-                        phones = extract_phones_from_text(snippet)
-                        
+                    phone_occurrences = extract_phone_occurrences(text_content)
+                    phone_context_source = "fetched page"
+                    if not phone_occurrences:
+                        # Use the search snippet only if the page has no phone candidate.
+                        phone_occurrences = extract_phone_occurrences(snippet)
+                        phone_context_source = "search-result snippet"
+                    phones = [phone for phone, _context in phone_occurrences]
+
                     lineage_record["phone_candidates_found"] = len(phones)
                     self.per_company_telemetry[company_name]["phone_candidates_found"] += len(phones)
-                    
+
                     if len(phones) == 0:
                         lineage_record["extraction_result"] = "No contextually valid phone candidates found"
                     else:
                         lineage_record["extraction_result"] = f"Found {len(phones)} candidates"
-                        
-                    for phone in phones:
-                        role = map_role_from_text(full_evidence)
+
+                    for phone, phone_context in phone_occurrences:
+                        # Do not assign the page's general purpose to every number.
+                        role = map_role_from_text(phone_context)
                         side = map_side_from_role(role)
                         
                         comp_conf = ConfidenceLevel.LOW
@@ -346,8 +377,8 @@ class BoundedDiscoveryEngine:
                             phone_normalized=re.sub(r'[\s\-\(\)]', '', phone),
                             source_url=url,
                             source_type="PUBLIC_WEB",
-                            evidence_text=snippet,
-                            evidence_location="Web search result/Page text",
+                            evidence_text=phone_context,
+                            evidence_location=f"Phone-local context from {phone_context_source}",
                             retrieved_at=datetime.utcnow().isoformat(),
                             company_match_confidence=comp_conf,
                             recruitment_relevance_confidence=rel_conf
