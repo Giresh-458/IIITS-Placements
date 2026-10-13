@@ -143,10 +143,6 @@ class PipelineOrchestrator:
             if stats.get("pages_succeeded", 0) == 0
         ]
 
-        if telemetry.sources_attempted > 0 and telemetry.sources_succeeded == 0:
-            raise RuntimeError(
-                f"Crawling failed for all {telemetry.sources_attempted} eligible sources."
-            )
         if telemetry.sources_failed:
             state["warnings"].append(
                 f"Crawling: {telemetry.sources_failed} of "
@@ -155,6 +151,11 @@ class PipelineOrchestrator:
         if telemetry.pages_failed:
             state["warnings"].append(
                 f"Crawling: {telemetry.pages_failed} page request(s) failed."
+            )
+
+        if telemetry.sources_attempted > 0 and telemetry.sources_succeeded == 0:
+            raise RuntimeError(
+                f"Crawling failed for all {telemetry.sources_attempted} eligible sources."
             )
         return state
 
