@@ -150,7 +150,7 @@ class CrawlerEngine:
 
             source_max_pages = context.request.user_data.get('max_pages', 15)
             source_max_depth = context.request.user_data.get('max_depth', 2)
-            if stats['pages_visited'] >= source_max_pages:
+            if stats['pages_visited'] > source_max_pages:
                 stats['stop_reason'] = "BUDGET_EXHAUSTED"
                 return
 
