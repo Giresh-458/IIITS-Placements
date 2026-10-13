@@ -163,3 +163,35 @@ def test_archive_page_with_multiple_notices_is_not_one_event_candidate():
     )
 
     assert candidate is None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_extraction_uses_article_scoped_dates_and_compensation():
+    article_text = (
+        "Campus Recruitment Drive by TechCorp. Interview Date: 10 Oct 2026. "
+        "Role: SDE. CTC: 12 LPA."
+    )
+    page = _page(article_text, url="https://example.edu/placement/event")
+    page["html"] = f"""
+    <html><body>
+      <article><div class="entry-content">{article_text}</div></article>
+      <section class="related-posts">
+        <p>Campus Recruitment Drive by OtherCorp. Interview Date: 23 Oct 2026. CTC: 40 LPA.</p>
+      </section>
+    </body></html>
+    """
+    page["text"] = (
+        article_text
+        + " Related: Campus Recruitment Drive by OtherCorp. "
+        + "Interview Date: 23 Oct 2026. CTC: 40 LPA."
+    )
+    state = create_initial_state()
+    state["crawled_pages"] = [page]
+
+    await PipelineOrchestrator()._do_extraction(state)
+
+    assert len(state["raw_candidates"]) == 1
+    candidate = state["raw_candidates"][0]
+    assert candidate["company_name"] == "TechCorp"
+    assert candidate["ctc_raw"] == "12 LPA"
+    assert candidate["event_date_raw"] == "10 Oct 2026"
