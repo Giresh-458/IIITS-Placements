@@ -19,8 +19,8 @@ This document records the execution paths visible in the current source tree. It
 | Order | Stage | Current implementation observed |
 |---:|---|---|
 | 1 | Discovery | Uses an explicitly provided source list when supplied; otherwise reads `artifacts/crawl_seed_registry.json`. Validates record shape, HTTP(S) seed URLs, and budgets for crawlable P0 categories (`P0_DIRECT_EVENT_FEED`, `P0_PUBLIC_EVENT_ARCHIVE`, `P0_EVENT_INDEX_WITH_CHILD_DETAILS`). Fails closed if input is malformed or no crawlable sources are selected. |
-| 2 | Crawling | Calls `CrawlerEngine` with the selected sources and stores candidate records and crawl telemetry in state. |
-| 3 | Extraction | Counts the candidates produced by crawling; it does not call a separate extraction component. |
+| 2 | Crawling | Calls `CrawlerEngine.crawl_pages()` with bounded source limits and stores raw HTML/text page captures plus crawl telemetry; extraction is not performed in this stage. |
+| 3 | Extraction | Calls `extract_candidates_from_pages()` over captured pages, scopes content to a primary article/body when identifiable, rejects likely multi-notice archives, and records extraction telemetry. |
 | 4 | Normalization | Calls `normalize_candidates()` and writes `artifacts/normalized_hiring_events.json`. |
 | 5 | Qualification | Calls `apply_business_filters()`, writes `artifacts/classified_events.json`, and uses a fixed `as_of` date in the current code. |
 | 6 | Evidence | Currently a no-op method. |
@@ -52,7 +52,7 @@ The root-level scripts form a separate artifact-driven path, with separate assum
 - The orchestrated path and standalone scripts are not the same execution path.
 - The two tracked registries have different record shapes and source categories; do not treat them as interchangeable without a schema/ownership decision.
 - Recovery and standalone normalization both write `normalized_hiring_events.json`.
-- Extraction and evidence are not independent work units in the orchestrator as currently implemented.
+- Extraction is a separate work unit after PR #10, but Evidence remains a no-op in the orchestrator.
 - Change detection is embedded in persistence code in one path, while the standalone Batch 10 runner duplicates persistence behavior.
 - Batch 9's final validation report currently hardcodes HOLD, while Batch 10's report hardcodes Docker validation as PASSED; neither line is reliable as acceptance evidence.
 - The diagram-level logical stage count and the 10 named orchestrator methods have not been mapped one-to-one in the current repository documentation.
