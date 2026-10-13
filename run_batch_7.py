@@ -31,10 +31,20 @@ def determine_terminal_state(ev, companies_with_verified, company_stop_reasons):
             return PhoneVerificationState.COMPANY_IDENTITY_REQUIRED.value, "Company identity missing; contact discovery not possible."
         else:
             stop_reason = company_stop_reasons.get(cname, "COMPLETED")
-            if stop_reason in ["API_RATE_LIMIT", "NETWORK_FAILURE"]:
-                return PhoneVerificationState.CONTACT_DISCOVERY_INCOMPLETE.value, f"Discovery interrupted: {stop_reason}"
-            else:
-                return PhoneVerificationState.NO_VERIFIED_PUBLIC_RECRUITMENT_PHONE.value, "Bounded public discovery performed but no verified recruitment phone found."
+            if stop_reason in {"API_RATE_LIMIT", "NETWORK_FAILURE", "SEARCH_PROVIDER_ERROR"}:
+                return (
+                    PhoneVerificationState.CONTACT_DISCOVERY_INCOMPLETE.value,
+                    f"Discovery interrupted: {stop_reason}",
+                )
+            if stop_reason in {"NO_SEARCH_RESULTS", "NO_RELEVANT_RESULTS", "NO_USABLE_RESULTS"}:
+                return (
+                    PhoneVerificationState.CONTACT_DISCOVERY_INCOMPLETE.value,
+                    f"Search did not yield usable company-specific pages: {stop_reason}",
+                )
+            return (
+                PhoneVerificationState.NO_VERIFIED_PUBLIC_RECRUITMENT_PHONE.value,
+                "Bounded public discovery performed but no verified recruitment phone found.",
+            )
     return "VERIFIED", "Contacts found"
 
 def main():
@@ -199,7 +209,10 @@ def main():
         
         if comp_verified > 0:
             final_status = "VERIFIED_CONTACTS_FOUND"
-        elif stop_reason in ["API_RATE_LIMIT", "NETWORK_FAILURE"]:
+        elif stop_reason in {
+            "API_RATE_LIMIT", "NETWORK_FAILURE", "SEARCH_PROVIDER_ERROR",
+            "NO_SEARCH_RESULTS", "NO_RELEVANT_RESULTS", "NO_USABLE_RESULTS",
+        }:
             final_status = "CONTACT_DISCOVERY_INCOMPLETE"
         else:
             final_status = "NO_VERIFIED_PHONE"
