@@ -317,18 +317,18 @@ def test_p4_empty_primary_queries_trigger_bounded_fallback():
         "body": "Berger Paints official company website",
     }
 
-    with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs, \\
-         patch("httpx.Client.get") as mock_get, \\
-         patch("src.extraction.contact_extractor.time.sleep"):
-        mock_ddgs.return_value.__enter__.return_value.text.side_effect = [
-            [], [], [official], []
-        ]
-        response = MagicMock()
-        response.status_code = 200
-        response.text = "<html><title>Berger Paints</title><body>No phone listed.</body></html>"
-        mock_get.return_value = response
+    with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs:
+        with patch("httpx.Client.get") as mock_get:
+            with patch("src.extraction.contact_extractor.time.sleep"):
+                mock_ddgs.return_value.__enter__.return_value.text.side_effect = [
+                    [], [], [official], []
+                ]
+                response = MagicMock()
+                response.status_code = 200
+                response.text = "<html><title>Berger Paints</title><body>No phone listed.</body></html>"
+                mock_get.return_value = response
 
-        candidates = engine.attempt_live_discovery("Berger Paints", "berger-1")
+                candidates = engine.attempt_live_discovery("Berger Paints", "berger-1")
 
     assert candidates == []
     text_mock = mock_ddgs.return_value.__enter__.return_value.text
