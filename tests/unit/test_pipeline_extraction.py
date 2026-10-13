@@ -306,7 +306,10 @@ def test_trident_detail_page_scopes_to_heading_article_and_extracts_berger_virtu
     assert candidate.company_name == "Berger Paints"
     assert candidate.campus_mode == "VIRTUAL"
     assert "Reliance Industries" not in candidate.raw_text_excerpt
-    assert "16th October 2026" in candidate.raw_text_excerpt
+    assert "Please find below the schedule" in candidate.raw_text_excerpt
+    assert len(candidate.raw_text_excerpt) > 400
+    assert candidate.event_date is not None
+    assert candidate.event_date.strftime("%Y-%m-%d") == "2026-10-16"
 
 
 def test_trident_archive_with_multiple_article_bodies_is_rejected():
@@ -331,3 +334,45 @@ def test_trident_archive_with_multiple_article_bodies_is_rejected():
     page["html"] = html
 
     assert extract_candidates_from_pages([page]) == []
+
+
+
+def test_aaa_detail_page_without_main_strips_site_header_from_fallback():
+    html = """
+    <html><body>
+      <header class="site-header">
+        <div>COUNSELLING CODE : 4680</div>
+        <nav>
+          <a href="/payments">ONLINE FEE PAYMENT</a>
+          <a href="/login">STAFF LOGIN</a>
+        </nav>
+      </header>
+      <div class="page-content">
+        <h2>From Campus to Career: Transenergy Pvt. Ltd. Recruitment Drive on 10-10-2026</h2>
+        <p>
+          AAA College of Engineering and Technology successfully conducted a
+          Campus Recruitment Drive by Transenergy Pvt. Ltd., Chennai, on
+          10 October 2026 for final-year students.
+        </p>
+      </div>
+    </body></html>
+    """
+    page = _page(
+        "header navigation before the event content",
+        url=(
+            "https://aaaenggcoll.ac.in/"
+            "from-campus-to-career-transenergy-pvt-ltd-recruitment-drive-on-10-10-2026"
+        ),
+        institution="AAA College of Engineering & Technology",
+    )
+    page["html"] = html
+
+    candidates = extract_candidates_from_pages([page])
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.company_name == "Transenergy Pvt. Ltd."
+    assert "ONLINE FEE PAYMENT" not in candidate.raw_text_excerpt
+    assert "COUNSELLING CODE" not in candidate.raw_text_excerpt
+
+
