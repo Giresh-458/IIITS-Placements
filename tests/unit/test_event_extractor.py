@@ -1,5 +1,5 @@
 import pytest
-from src.extraction.event_extractor import extract_from_text
+from src.extraction.event_extractor import extract_event_candidate, extract_from_text
 
 def test_company_article_heading():
     res = extract_from_text("Campus Recruitment Drive by Emicon Advisory Services LLP for B.Tech", "http://x")
@@ -59,3 +59,36 @@ def test_registration_deadline_vs_event_date():
 def test_campus_mode_extraction():
     res = extract_from_text("Physical Campus Drive by Example", "http://x")
     assert res["campus_mode_candidate"] == "ON_CAMPUS"
+
+
+def test_generic_online_navigation_text_does_not_set_campus_mode():
+    res = extract_from_text(
+        "ONLINE FEE PAYMENT\\nCampus Recruitment Drive by Example",
+        "https://example.edu/event",
+    )
+    assert res["campus_mode_candidate"] is None
+
+
+def test_explicit_virtual_campus_drive_sets_virtual_mode():
+    res = extract_from_text(
+        "Virtual Campus Drive by Example",
+        "https://example.edu/event",
+    )
+    assert res["campus_mode_candidate"] == "VIRTUAL"
+
+
+def test_drive_mode_label_can_set_virtual_mode():
+    res = extract_from_text(
+        "Company: Example\\nMode of Drive: Online\\nCampus Recruitment Drive",
+        "https://example.edu/event",
+    )
+    assert res["campus_mode_candidate"] == "VIRTUAL"
+
+
+def test_generic_online_test_does_not_set_virtual_campus_mode():
+    res = extract_from_text(
+        "Campus Recruitment Drive by Example. Online aptitude test on 12 October.",
+        "https://example.edu/event",
+    )
+    assert res["campus_mode_candidate"] is None
+
