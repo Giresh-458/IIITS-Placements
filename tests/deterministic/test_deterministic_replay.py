@@ -26,9 +26,20 @@ async def test_end_to_end_replay(setup_db):
     async def mock_crawl(state):
         state['crawl_telemetry'] = {}
         state['telemetry']['crawl_telemetry'] = {}
-        state['raw_candidates'] = [
-            {'institution': 'Inst1', 'company_name': 'Valid Corp Int', 'role': 'SDE', 'ctc_raw': '10 LPA', 'source_seed_url': 'http://test1'}
-        ]
+        page_text = (
+            "Campus Recruitment Drive by Valid Corp Int. "
+            "Role: SDE. CTC: 10 LPA. Batch 2026. Branches: CSE, IT"
+        )
+        state['crawled_pages'] = [{
+            'institution': 'Inst1',
+            'seed_url': 'http://test1',
+            'url': 'http://test1/event',
+            'html': f"<html><body>{page_text}</body></html>",
+            'text': page_text,
+            'depth': 0,
+            'http_status': 200,
+        }]
+        state['raw_candidates'] = []
         state['telemetry']['sources_succeeded'] = 1
         state['telemetry']['sources_attempted'] = 1
         return state
