@@ -229,7 +229,7 @@ def test_p_genuine_zero_result():
     engine = BoundedDiscoveryEngine()
 
     with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs:
-        # Mock DDGS to return an empty list for both bounded queries.
+        # Mock DDGS to return empty lists for both primary and both fallback queries.
         mock_ddgs.return_value.__enter__.return_value.text.return_value = []
         candidates = engine.attempt_live_discovery("TestCorp", "test_id")
 
