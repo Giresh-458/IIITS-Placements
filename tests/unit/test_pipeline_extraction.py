@@ -195,3 +195,27 @@ async def test_pipeline_extraction_uses_article_scoped_dates_and_compensation():
     assert candidate["company_name"] == "TechCorp"
     assert candidate["ctc_raw"] == "12 LPA"
     assert candidate["event_date_raw"] == "10 Oct 2026"
+
+
+
+def test_scoped_extraction_preserves_html_block_boundaries():
+    html = """
+    <html><head><title>Full Event Example</title></head><body>
+      <h1>Campus Recruitment Drive by TechCorp Solutions Private Limited</h1>
+      <p>Role: Software Engineer</p>
+      <p>Location: Bangalore</p>
+      <p>CTC: 12 LPA</p>
+      <p>Eligible Branches: CSE, IT, ECE</p>
+    </body></html>
+    """
+    candidate = extract_event_candidate(
+        html,
+        "flattened page text that may lack boundaries",
+        "https://example.edu/event_full.html",
+        {"institution": "Test College", "seed_url": "https://example.edu/placements"},
+    )
+
+    assert candidate is not None
+    assert "TechCorp Solutions" in candidate.company_name
+    assert "Software Engineer" in candidate.role
+    assert candidate.ctc_raw == "12 LPA"

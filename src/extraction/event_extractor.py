@@ -218,7 +218,10 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
 
     soup = BeautifulSoup(html, "html.parser")
     for element in list(soup.find_all(["script", "style", "nav", "footer", "aside", "form", "noscript"])):
-        element.decompose()
+        # Removing a parent also decomposes its descendants in BeautifulSoup.
+        # A snapshot of find_all() can still contain those now-invalid objects.
+        if element.parent is not None and getattr(element, "attrs", None) is not None:
+            element.decompose()
 
     chrome_tokens = (
         "related-post", "related_posts", "sidebar", "post-navigation",
@@ -227,6 +230,9 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
         "nav-menu", "social-share", "author-box",
     )
     for element in list(soup.find_all(True)):
+        # A removed ancestor may leave decomposed descendants in this snapshot.
+        if element.parent is None or getattr(element, "attrs", None) is None:
+            continue
         classes = element.get("class", [])
         if isinstance(classes, str):
             classes = [classes]
@@ -288,7 +294,10 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
             table.insert_before(new_div)
         table.decompose()
 
-    return scope.get_text(separator=" ", strip=True)
+    # Preserve block boundaries. Extraction regexes use line boundaries to
+    # stop company/role fields before the next label, so flattening everything
+    # into a single space can consume labels or fail to identify the company.
+    return scope.get_text(separator="\n", strip=True)
 
 
 def extract_event_candidate(html: str, text: str, url: str, metadata: dict = None) -> Any:
