@@ -234,20 +234,98 @@ def _looks_like_event_listing(scope) -> bool:
 
 
 def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | None:
-    """Return text for one page/article, excluding site chrome and related posts.
-
-    Archive pages are intentionally rejected here: treating an index of several
-    notices as one event can mix a company, role, and date from different posts.
-    """
+    """Return one page's primary content without site chrome or related posts."""
     if not html:
         return fallback_text
 
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
-    for element in list(soup.find_all(["script", "style", "nav", "footer", "aside", "form", "noscript"])):
-        # Removing a parent also decomposes its descendants in BeautifulSoup.
-        # A snapshot of find_all() can still contain those now-invalid objects.
+
+    # Scope a detail page to its title's article BEFORE removing site-wide
+    # chrome. Some themes wrap post content in containers whose classes look
+    # like related/recent-post areas; deleting those from the document first
+    # can accidentally detach the primary article or its body.
+    heading = soup.find("h1", class_="entry-title")
+    if heading is None:
+        first_h1 = soup.find("h1")
+        if first_h1 is not None and first_h1.find_parent("article") is not None:
+            heading = first_h1
+
+    primary_article = heading.find_parent("article") if heading else None
+    if primary_article is not None:
+        title_text = heading.get_text(" ", strip=True)
+        isolated_soup = BeautifulSoup(str(primary_article), "html.parser")
+        scope = isolated_soup.find("article") or isolated_soup
+
+        for element in list(
+            scope.find_all(["script", "style", "nav", "header", "footer", "aside", "form", "noscript"])
+        ):
+            if element.parent is not None and getattr(element, "attrs", None) is not None:
+                element.decompose()
+
+        chrome_tokens = (
+            "related-post", "related_posts", "sidebar", "post-navigation",
+            "comments-area", "comment-respond", "site-footer", "footer-widget",
+            "widget-area", "recent-posts", "recent-notices", "breadcrumb",
+            "nav-menu", "social-share", "author-box", "post-meta",
+        )
+        for element in list(scope.find_all(True)):
+            if element.parent is None or getattr(element, "attrs", None) is None:
+                continue
+            classes = element.get("class", [])
+            if isinstance(classes, str):
+                classes = [classes]
+            identifier = str(element.get("id", ""))
+            label = " ".join([identifier, *[str(item) for item in classes]]).lower()
+            if any(token in label for token in chrome_tokens):
+                element.decompose()
+
+        # Body selectors are evaluated only inside the primary article, so
+        # sibling related-post cards cannot create selector ambiguity.
+        body_selectors = (
+            "[itemprop='articleBody']",
+            ".entry-content",
+            ".post-content",
+            ".article-content",
+            ".td-post-content",
+            ".single-post-content",
+        )
+        body_scope = scope
+        for selector in body_selectors:
+            matches = scope.select(selector)
+            if len(matches) == 1:
+                body_scope = matches[0]
+                break
+
+        for table in list(body_scope.find_all("table")):
+            headers = [th.get_text(" ", strip=True) for th in table.find_all("th")]
+            for row in table.find_all("tr"):
+                cells = [td.get_text(" ", strip=True) for td in row.find_all("td")]
+                if not cells:
+                    continue
+                row_text = []
+                for index, cell in enumerate(cells):
+                    if index < len(headers) and headers[index]:
+                        row_text.append(f"{headers[index]}: {cell}")
+                    else:
+                        row_text.append(cell)
+                new_div = isolated_soup.new_tag("div")
+                new_div.string = " | ".join(row_text)
+                table.insert_before(new_div)
+            table.decompose()
+
+        body_text = body_scope.get_text(separator="\n", strip=True)
+        if title_text and title_text.lower() not in body_text.lower():
+            return f"{title_text}\n{body_text}".strip()
+        return body_text
+
+    # No article-scoped H1: handle archive pages and themes without <article>.
+    # Strip semantic chrome first, including the <header> used for institutional
+    # navigation on pages such as AAA College's placement detail page.
+    for element in list(
+        soup.find_all(["script", "style", "nav", "header", "footer", "aside", "form", "noscript"])
+    ):
         if element.parent is not None and getattr(element, "attrs", None) is not None:
             element.decompose()
 
@@ -255,10 +333,11 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
         "related-post", "related_posts", "sidebar", "post-navigation",
         "comments-area", "comment-respond", "site-footer", "footer-widget",
         "widget-area", "recent-posts", "recent-notices", "breadcrumb",
-        "nav-menu", "social-share", "author-box",
+        "nav-menu", "social-share", "author-box", "site-header", "masthead",
+        "site-navigation", "main-navigation", "primary-navigation",
+        "header-widget", "header-top", "top-bar", "skip-link",
     )
     for element in list(soup.find_all(True)):
-        # A removed ancestor may leave decomposed descendants in this snapshot.
         if element.parent is None or getattr(element, "attrs", None) is None:
             continue
         classes = element.get("class", [])
@@ -269,10 +348,6 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
         if any(token in label for token in chrome_tokens):
             element.decompose()
 
-    # Prefer the article that encloses the page's actual H1 before running
-    # broad body selectors. WordPress detail pages often return related-post
-    # cards as sibling articles, so selectors such as .entry-content can match
-    # several posts even though the current URL is a single detail page.
     body_selectors = (
         "[itemprop='articleBody']",
         ".entry-content",
@@ -281,46 +356,33 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
         ".td-post-content",
         ".single-post-content",
     )
-    h1 = soup.find("h1")
-    h1_article = h1.find_parent("article") if h1 else None
     scope = None
+    for selector in body_selectors:
+        matches = soup.select(selector)
+        if matches:
+            if len(matches) != 1:
+                return None
+            scope = matches[0]
+            break
 
-    if h1_article is not None:
-        # Keep the headline and body together: event titles often carry the
-        # company name and drive mode, which may not be repeated in the body.
-        scope = h1_article
-    else:
-        # Without an article-scoped H1, selectors must be unique across the
-        # document. Multiple matches usually mean an archive/listing page.
-        for selector in body_selectors:
-            matches = soup.select(selector)
-            if matches:
-                if len(matches) != 1:
-                    return None
-                scope = matches[0]
-                break
-
-        if scope is None:
-            articles = soup.find_all("article")
-            if len(articles) == 1:
-                scope = articles[0]
-            elif len(articles) > 1:
+    if scope is None:
+        articles = soup.find_all("article")
+        if len(articles) == 1:
+            scope = articles[0]
+        elif len(articles) > 1:
+            return None
+        else:
+            main_regions = soup.find_all("main")
+            if len(main_regions) == 1:
+                scope = main_regions[0]
+            elif len(main_regions) > 1:
                 return None
             else:
-                # Some institutional themes do not use <article> or a
-                # recognized article-body class. Prefer one semantic main.
-                main_regions = soup.find_all("main")
-                if len(main_regions) == 1:
-                    scope = main_regions[0]
-                elif len(main_regions) > 1:
-                    return None
-                else:
-                    scope = soup.body or soup
+                scope = soup.body or soup
 
     if _looks_like_event_listing(scope):
         return None
 
-    # Preserve table values in the scoped article while removing table layout.
     for table in list(scope.find_all("table")):
         headers = [th.get_text(" ", strip=True) for th in table.find_all("th")]
         for row in table.find_all("tr"):
@@ -338,11 +400,7 @@ def _extract_candidate_text(html: str, fallback_text: str, url: str) -> str | No
             table.insert_before(new_div)
         table.decompose()
 
-    # Preserve block boundaries. Extraction regexes use line boundaries to
-    # stop company/role fields before the next label, so flattening everything
-    # into a single space can consume labels or fail to identify the company.
     return scope.get_text(separator="\n", strip=True)
-
 
 def extract_event_candidate(html: str, text: str, url: str, metadata: dict = None) -> Any:
     """Extract one event candidate only from the page's primary article content."""

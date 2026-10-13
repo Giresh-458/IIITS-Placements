@@ -44,7 +44,7 @@ def parse_date_with_context(date_str: str, html_context: str = "", current_date:
 
 def extract_dates(text: str, html_context: str, current_date: Optional[datetime] = None) -> Tuple[Optional[datetime], str, str, Optional[datetime], str, str]:
     # Extract event date
-    event_date_match = re.search(r'\b(Drive Date|Date of Drive|Interview Date|Schedule|Date|Campus Drive|On)\s*[:\-]?\s*(\d{1,2}[-/]\d{1,2}([-/]\d{2,4})?|\d{1,2}(st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?)\b', text, re.IGNORECASE)
+    event_date_match = re.search(r'\b(Drive Date|Date of Drive|Interview Date|Schedule|Date|Campus Drive|On)\s*[:\-]?\s*[\(\[]?\s*(\d{1,2}[-/]\d{1,2}([-/]\d{2,4})?|\d{1,2}(st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?)\b', text, re.IGNORECASE)
     event_date = None
     event_conf = "UNKNOWN"
     event_raw = None
