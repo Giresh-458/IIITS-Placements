@@ -25,9 +25,9 @@ class CrawlerEngine:
         self.global_max_depth = max_depth
         # Reserve URLs when they are queued to make per-source budgets reliable.
         self._scheduled_urls_by_source: Dict[str, set] = {}
-        # Track crawl attempts outside Request.user_data because Crawlee may copy it on retry.
+        # Track logical URLs outside Request.user_data because Crawlee may copy it on retry.
         self._recorded_logical_requests: set[str] = set()
-        self._attempts_reached_handler: set[Tuple[str, int]] = set()
+        self._recorded_http_requests: set[str] = set()
         self.router = Router[BeautifulSoupCrawlingContext]()
         self.setup_router()
 
@@ -39,11 +39,6 @@ class CrawlerEngine:
             or request.url
         )
 
-    @classmethod
-    def _request_attempt_key(cls, request: Any) -> Tuple[str, int]:
-        retry_count = getattr(request, "retry_count", 0)
-        return cls._request_identity(request), int(retry_count or 0)
-
     def _record_logical_page_attempt(self, request: Any, institution: str) -> None:
         """Count a queued URL once, even if Crawlee retries it."""
         request_identity = self._request_identity(request)
@@ -54,6 +49,13 @@ class CrawlerEngine:
         self._source_stats(institution)["pages_visited"] += 1
         self.telemetry.pages_attempted += 1
         self.telemetry.requests_attempted += 1
+
+    def _record_http_request(self, request: Any) -> None:
+        """Count each distinct crawled URL once, not every retry attempt."""
+        request_identity = self._request_identity(request)
+        if request_identity not in self._recorded_http_requests:
+            self._recorded_http_requests.add(request_identity)
+            self.telemetry.http_requests += 1
 
     def _source_stats(self, institution: str) -> Dict[str, Any]:
         return self.telemetry.source_stats.setdefault(
@@ -165,10 +167,7 @@ class CrawlerEngine:
             seed_url = context.request.user_data.get('seed_url', url)
             inst = context.request.user_data.get('institution', 'UNKNOWN')
             self._record_logical_page_attempt(context.request, inst)
-            self._attempts_reached_handler.add(
-                self._request_attempt_key(context.request)
-            )
-            self.telemetry.http_requests += 1
+            self._record_http_request(context.request)
             stats = self._source_stats(inst)
 
             source_max_pages = context.request.user_data.get('max_pages', 15)
@@ -304,13 +303,7 @@ class CrawlerEngine:
         async def record_retry(context, error):
             request = context.request
             institution = request.user_data.get("institution", "UNKNOWN")
-            attempt_key = self._request_attempt_key(request)
             self.telemetry.retries += 1
-
-            # Only count an HTTP attempt here if it failed before reaching the
-            # normal handler. Handler-entered attempts were counted on entry.
-            if attempt_key not in self._attempts_reached_handler:
-                self.telemetry.http_requests += 1
             self._record_logical_page_attempt(request, institution)
             return None
 
@@ -318,13 +311,8 @@ class CrawlerEngine:
         async def record_terminal_failure(context, error):
             request = context.request
             institution = request.user_data.get("institution", "UNKNOWN")
-            attempt_key = self._request_attempt_key(request)
-
-            # Terminal failures before handler entry need their final attempt
-            # counted; prior retry attempts are counted by record_retry.
-            if attempt_key not in self._attempts_reached_handler:
-                self.telemetry.http_requests += 1
             self._record_logical_page_attempt(request, institution)
+            self._record_http_request(request)
             self._record_failed_request(request.url, institution, error)
 
         requests = []
@@ -335,7 +323,7 @@ class CrawlerEngine:
         }
         self._scheduled_urls_by_source = {}
         self._recorded_logical_requests = set()
-        self._attempts_reached_handler = set()
+        self._recorded_http_requests = set()
         for source in self.seeds:
             if source.get("source_category") not in supported_categories:
                 continue
