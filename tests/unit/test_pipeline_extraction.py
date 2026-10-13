@@ -400,7 +400,7 @@ def test_company_extraction_ignores_social_links_before_gotrust():
 
     assert candidate is not None
     assert candidate.company_name == "GoTrust"
-    assert "\\n" not in candidate.company_name
+    assert "\n" not in candidate.company_name
     assert "LinkedIn" not in candidate.company_name
 
 
