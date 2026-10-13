@@ -18,7 +18,7 @@ This document records the execution paths visible in the current source tree. It
 
 | Order | Stage | Current implementation observed |
 |---:|---|---|
-| 1 | Discovery | Reads `artifacts/crawl_seed_registry.json` and selects rows with `source_category == P0_DIRECT_EVENT_FEED`. |
+| 1 | Discovery | Uses an explicitly provided source list when supplied; otherwise reads `artifacts/crawl_seed_registry.json`. Validates record shape, HTTP(S) seed URLs, and budgets for crawlable P0 categories (`P0_DIRECT_EVENT_FEED`, `P0_PUBLIC_EVENT_ARCHIVE`, `P0_EVENT_INDEX_WITH_CHILD_DETAILS`). Fails closed if input is malformed or no crawlable sources are selected. |
 | 2 | Crawling | Calls `CrawlerEngine` with the selected sources and stores candidate records and crawl telemetry in state. |
 | 3 | Extraction | Counts the candidates produced by crawling; it does not call a separate extraction component. |
 | 4 | Normalization | Calls `normalize_candidates()` and writes `artifacts/normalized_hiring_events.json`. |
