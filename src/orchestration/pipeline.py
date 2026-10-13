@@ -154,7 +154,7 @@ class PipelineOrchestrator:
             )
         if telemetry.pages_failed:
             state["warnings"].append(
-                f"Crawling: {telemetry.pages_failed} page request(s) failed after retries."
+                f"Crawling: {telemetry.pages_failed} page request(s) failed."
             )
         return state
 
