@@ -291,10 +291,10 @@ def test_p3_single_token_company_name_rejects_similarly_named_brand():
     assert _search_result_matches_company(target_company, official)
 
     engine = BoundedDiscoveryEngine()
-    with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs, \\
-         patch("httpx.Client.get") as mock_get:
-        mock_ddgs.return_value.__enter__.return_value.text.return_value = [unrelated]
-        candidates = engine.attempt_live_discovery(target_company, "evt-1")
+    with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs:
+        with patch("httpx.Client.get") as mock_get:
+            mock_ddgs.return_value.__enter__.return_value.text.return_value = [unrelated]
+            candidates = engine.attempt_live_discovery(target_company, "evt-1")
 
     assert candidates == []
     assert mock_get.call_count == 0
