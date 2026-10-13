@@ -147,6 +147,10 @@ async def test_pipeline_crawling_fails_closed_when_every_source_fails(monkeypatc
     assert state["telemetry"]["sources_succeeded"] == 0
     assert state["telemetry"]["sources_failed"] == 2
     assert len(state["failed_sources"]) == 2
+    assert state["warnings"] == [
+        "Crawling: 2 of 2 eligible sources had no successful page.",
+        "Crawling: 1 page request(s) failed.",
+    ]
 
 
 
