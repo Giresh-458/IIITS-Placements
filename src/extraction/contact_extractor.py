@@ -26,11 +26,20 @@ def _company_search_name(company_name: str) -> str:
 
 
 def generate_queries(company_name: str) -> List[str]:
-    # Keep two bounded queries, but don't make the search engine parse a broad OR chain.
+    # Keep two primary bounded queries, but don't make the search engine parse a broad OR chain.
     search_name = _company_search_name(company_name)
     return [
         f'"{search_name}" company contact official website',
         f'"{search_name}" HR recruiter talent acquisition phone',
+    ]
+
+
+def generate_fallback_queries(company_name: str) -> List[str]:
+    """Broaden once when primary search produced no company-matched URLs."""
+    search_name = _company_search_name(company_name)
+    return [
+        f'"{search_name}"',
+        f'{search_name} India careers official',
     ]
 
 
@@ -194,36 +203,49 @@ class BoundedDiscoveryEngine:
         queries = generate_queries(company_name)
         self.telemetry["queries_generated"] += len(queries)
         self.per_company_telemetry[company_name]["queries_generated"] += len(queries)
-        
+
         urls_to_fetch = {}
-        
         company_stats = self.per_company_telemetry[company_name]
+
+        def collect_results(ddgs, query: str) -> None:
+            results = list(ddgs.text(query, backend="bing", max_results=3))
+            self.telemetry["search_results_returned"] += len(results)
+            company_stats["search_results_returned"] += len(results)
+            for result in results:
+                url = result.get("href")
+                if not url:
+                    continue
+                url_lower = url.lower()
+                if "linkedin.com" in url_lower or "glassdoor.com" in url_lower:
+                    self.telemetry["blocked_domain_results_filtered"] += 1
+                    company_stats["blocked_domain_results_filtered"] += 1
+                    continue
+                if not _search_result_matches_company(company_name, result):
+                    self.telemetry["irrelevant_results_filtered"] += 1
+                    company_stats["irrelevant_results_filtered"] += 1
+                    continue
+                if url not in urls_to_fetch and len(urls_to_fetch) < 4:
+                    self.telemetry["urls_discovered"] += 1
+                    company_stats["urls_discovered"] += 1
+                    urls_to_fetch[url] = {
+                        "snippet": result.get("body", ""),
+                        "query": query,
+                    }
+
         try:
-            # Live diagnostics showed this installed wrapper returns empty lists on
-            # default/HTML/Lite while the explicitly selected Bing backend returns results.
+            # The installed default/HTML/Lite backends returned no results locally;
+            # explicitly use Bing. If two primary queries yield no matched URL,
+            # issue two more bounded fallback queries before declaring discovery empty.
             with DDGS(timeout=10) as ddgs:
-                for q in queries:
-                    # Bounded search: max 3 results per query and 4 unique URLs per company.
-                    results = list(ddgs.text(q, backend="bing", max_results=3))
-                    self.telemetry["search_results_returned"] += len(results)
-                    company_stats["search_results_returned"] += len(results)
-                    for r in results:
-                        url = r.get("href")
-                        if not url:
-                            continue
-                        url_lower = url.lower()
-                        if "linkedin.com" in url_lower or "glassdoor.com" in url_lower:
-                            self.telemetry["blocked_domain_results_filtered"] += 1
-                            company_stats["blocked_domain_results_filtered"] += 1
-                            continue
-                        if not _search_result_matches_company(company_name, r):
-                            self.telemetry["irrelevant_results_filtered"] += 1
-                            company_stats["irrelevant_results_filtered"] += 1
-                            continue
-                        if url not in urls_to_fetch and len(urls_to_fetch) < 4:
-                            self.telemetry["urls_discovered"] += 1
-                            company_stats["urls_discovered"] += 1
-                            urls_to_fetch[url] = {"snippet": r.get("body", ""), "query": q}
+                for query in queries:
+                    collect_results(ddgs, query)
+
+                if not urls_to_fetch and company_stats["stop_reason"] == "COMPLETED":
+                    fallback_queries = generate_fallback_queries(company_name)
+                    self.telemetry["queries_generated"] += len(fallback_queries)
+                    company_stats["queries_generated"] += len(fallback_queries)
+                    for query in fallback_queries:
+                        collect_results(ddgs, query)
         except Exception as e:
             self.telemetry["exceptions"] += 1
             message = str(e).lower()
@@ -242,7 +264,7 @@ class BoundedDiscoveryEngine:
                 company_stats["stop_reason"] = "NO_RELEVANT_RESULTS"
             else:
                 company_stats["stop_reason"] = "NO_USABLE_RESULTS"
-            
+
         for url, data in urls_to_fetch.items():
             snippet = data["snippet"]
             query = data["query"]

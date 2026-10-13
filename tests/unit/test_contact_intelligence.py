@@ -229,7 +229,7 @@ def test_p_genuine_zero_result():
     engine = BoundedDiscoveryEngine()
 
     with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs:
-        # Mock DDGS to return an empty list for both bounded queries.
+        # Mock DDGS to return empty lists for both primary and both fallback queries.
         mock_ddgs.return_value.__enter__.return_value.text.return_value = []
         candidates = engine.attempt_live_discovery("TestCorp", "test_id")
 
@@ -238,6 +238,8 @@ def test_p_genuine_zero_result():
         assert engine.per_company_telemetry["TestCorp"]["urls_discovered"] == 0
         assert engine.telemetry["stop_reason"] == "NO_SEARCH_RESULTS"
         assert engine.telemetry["search_results_returned"] == 0
+        assert engine.per_company_telemetry["TestCorp"]["queries_generated"] == 4
+        assert mock_ddgs.return_value.__enter__.return_value.text.call_count == 4
 
 def test_p2_explicit_bing_backend_filters_unrelated_results():
     from src.extraction.contact_extractor import BoundedDiscoveryEngine
@@ -256,7 +258,7 @@ def test_p2_explicit_bing_backend_filters_unrelated_results():
         candidates = engine.attempt_live_discovery("Transenergy Pvt. Ltd.", "evt-1")
 
     assert candidates == []
-    assert mock_ddgs.return_value.__enter__.return_value.text.call_count == 2
+    assert mock_ddgs.return_value.__enter__.return_value.text.call_count == 4
     assert all(
         call.kwargs.get("backend") == "bing"
         for call in mock_ddgs.return_value.__enter__.return_value.text.call_args_list
@@ -264,7 +266,7 @@ def test_p2_explicit_bing_backend_filters_unrelated_results():
     assert mock_get.call_count == 0
     assert engine.per_company_telemetry["Transenergy Pvt. Ltd."]["urls_discovered"] == 0
     assert engine.per_company_telemetry["Transenergy Pvt. Ltd."]["stop_reason"] == "NO_RELEVANT_RESULTS"
-    assert engine.telemetry["irrelevant_results_filtered"] == 2
+    assert engine.telemetry["irrelevant_results_filtered"] == 4
 
 
 
@@ -300,6 +302,50 @@ def test_p3_single_token_company_name_rejects_similarly_named_brand():
     assert mock_get.call_count == 0
     assert engine.per_company_telemetry[target_company]["urls_discovered"] == 0
     assert engine.per_company_telemetry[target_company]["stop_reason"] == "NO_RELEVANT_RESULTS"
+
+
+
+
+def test_p4_empty_primary_queries_trigger_bounded_fallback():
+    from src.extraction.contact_extractor import BoundedDiscoveryEngine
+    from unittest.mock import patch, MagicMock
+
+    engine = BoundedDiscoveryEngine()
+    official = {
+        "href": "https://www.bergerpaints.com/",
+        "title": "Interior & Exterior Home Paints | Berger Paints",
+        "body": "Berger Paints official company website",
+    }
+
+    with patch("src.extraction.contact_extractor.DDGS") as mock_ddgs:
+        with patch("httpx.Client.get") as mock_get:
+            with patch("src.extraction.contact_extractor.time.sleep"):
+                mock_ddgs.return_value.__enter__.return_value.text.side_effect = [
+                    [], [], [official], []
+                ]
+                response = MagicMock()
+                response.status_code = 200
+                response.text = "<html><title>Berger Paints</title><body>No phone listed.</body></html>"
+                mock_get.return_value = response
+
+                candidates = engine.attempt_live_discovery("Berger Paints", "berger-1")
+
+    assert candidates == []
+    text_mock = mock_ddgs.return_value.__enter__.return_value.text
+    assert text_mock.call_count == 4
+    assert [call.args[0] for call in text_mock.call_args_list] == [
+        '"Berger Paints" company contact official website',
+        '"Berger Paints" HR recruiter talent acquisition phone',
+        '"Berger Paints"',
+        'Berger Paints India careers official',
+    ]
+    assert all(call.kwargs.get("backend") == "bing" for call in text_mock.call_args_list)
+    stats = engine.per_company_telemetry["Berger Paints"]
+    assert stats["queries_generated"] == 4
+    assert stats["urls_discovered"] == 1
+    assert stats["urls_attempted"] == 1
+    assert stats["stop_reason"] == "COMPLETED"
+    assert engine.telemetry["search_results_returned"] == 1
 
 
 
