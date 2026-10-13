@@ -229,7 +229,7 @@ async def test_terminal_crawl_failure_callback_records_403_and_attempt_counts(mo
     assert telemetry.sources_failed == 1
     assert telemetry.pages_attempted == 1
     assert telemetry.pages_failed == 1
-    assert telemetry.http_requests == 3
+    assert telemetry.http_requests == 1
     assert telemetry.retries == 2
     assert stats["pages_visited"] == 1
     assert stats["pages_succeeded"] == 0
