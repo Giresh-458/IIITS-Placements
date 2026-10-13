@@ -163,13 +163,17 @@ def test_record_page_success_updates_aggregate_and_per_source_counters():
     )
 
     engine._record_logical_page_attempt(request, "Example College")
-    engine._record_page_success("Example College")
+    engine._record_http_request(request)
+    engine._record_page_success(request, "Example College")
+    # A retry of the same URL must not inflate logical URL counters.
+    engine._record_page_success(request, "Example College")
 
     stats = engine.telemetry.source_stats["Example College"]
     assert engine.telemetry.pages_attempted == 1
     assert engine.telemetry.pages_succeeded == 1
     assert engine.telemetry.requests_attempted == 1
     assert engine.telemetry.requests_succeeded == 1
+    assert engine.telemetry.http_requests == 1
     assert stats["pages_visited"] == 1
     assert stats["pages_succeeded"] == 1
 
