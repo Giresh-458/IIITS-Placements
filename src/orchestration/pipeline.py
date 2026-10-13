@@ -366,7 +366,7 @@ class PipelineOrchestrator:
         temporary_path = output_path.with_name(output_path.name + ".tmp")
         temporary_path.write_text(
             json.dumps(evidence_records, indent=2, ensure_ascii=False, default=str)
-            + "\\n",
+            + "\n",
             encoding="utf-8",
         )
         temporary_path.replace(output_path)
