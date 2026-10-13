@@ -212,11 +212,13 @@ class PipelineOrchestrator:
         return state
 
     async def _do_qualification(self, state: PipelineRunState):
-        from src.classification.business_rules import apply_business_filters
+        from src.classification.business_rules import apply_business_filters, current_as_of_date
         from src.models.domain import NormalizedHiringEvent
         import json
         events = [NormalizedHiringEvent(**item) for item in state["normalized_events"]]
-        res = apply_business_filters(events, as_of=datetime(2026, 10, 5))
+        as_of = current_as_of_date()
+        state["telemetry"]["qualification_as_of_date"] = as_of.date().isoformat()
+        res = apply_business_filters(events, as_of=as_of)
         classifications = res["classifications"]
         
         classified_data = []
