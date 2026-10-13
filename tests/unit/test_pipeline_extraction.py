@@ -410,7 +410,8 @@ def test_company_extraction_handles_itc_sentence_without_capturing_tail_fragment
       <article>
         <h1>ITC Limited campus recruitment MBA Marketing 2027</h1>
         <div class="entry-content">
-          <p>ITC Limited</p>
+          <p>ITC</p>
+          <p>Limited</p>
           <p>will be conducting a Campus Recruitment Drive for MBA Marketing
           candidates of 2027 batch. Registration closes 9 October 2026.</p>
         </div>
