@@ -47,6 +47,7 @@ def _telemetry(*, successes, failed, source_stats):
         sources_succeeded=successes,
         sources_failed=failed,
         pages_attempted=2,
+        pages_failed=1 if failed else 0,
         http_requests=2,
         browser_pages=0,
         exceptions=[],
@@ -104,7 +105,8 @@ async def test_pipeline_crawling_propagates_measured_source_outcomes(monkeypatch
         }
     ]
     assert state["warnings"] == [
-        "Crawling: 1 of 2 eligible sources had no successful page."
+        "Crawling: 1 of 2 eligible sources had no successful page.",
+        "Crawling: 1 page request(s) failed after retries.",
     ]
 
 
